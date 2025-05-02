@@ -61,3 +61,26 @@ class Radial(BaseModel):
             r[mask] = new_r[mask] / r[mask]
         
         return torch.cat((uv * r[:, None], torch.ones_like(uv[:, :1])), dim=-1)
+
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        valid = pts3d[:, 2] > 0
+        pts3d = pts3d[valid]
+        uv = uv = pts3d[:, :2] / pts3d[:, 2][:, None]
+        u2 = uv[:, 0] * uv[:, 0]
+        v2 = uv[:, 1] * uv[:, 1]
+        r_3d_2 = u2 + v2
+        r_3d_4 = r_3d_2 * r_3d_2
+        r_3d = torch.sqrt(r_3d_2)
+        pts2d = (pts2d[valid] - self[1:3].reshape(1, 2)) / self[0]
+        r_2d = torch.linalg.norm(pts2d, dim=-1)
+
+        mask = r_3d > self.EPSILON
+        if mask.any():
+            b = (r_2d[mask] / r_3d[mask] - 1)
+            A = torch.stack([r_3d_2, r_3d_4], dim=-1)[mask]
+            x = torch.linalg.lstsq(A, b[:, None], rcond=None)[0]
+            self[3] = x[0]
+            self[4] = x[1]
+        else:
+            self[3] = 0.0
+            self[4] = 0.0

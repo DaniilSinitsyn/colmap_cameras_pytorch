@@ -4,6 +4,7 @@
 Colmap camera models implemented in PyTorch
 """
 import torch
+import warnings
 
 class BaseModel:
     """
@@ -108,6 +109,75 @@ class BaseModel:
         return self[:self.num_focal_params].mean()
     def get_center(self):
         return self[self.num_focal_params:self.num_focal_params + self.num_pp_params]
+    
+    def set_focal(self, value):
+        self[:self.num_focal_params] = value
+
+    def set_center(self, value):
+        self[self.num_focal_params:self.num_focal_params + self.num_pp_params] = value
+
+    def get_center_resolution_focal(self):
+        focal = 0.0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0: continue
+                point = self.get_center()
+                dxy = torch.tensor([dx, dy]).to(point)
+                dxy = dxy / torch.linalg.norm(dxy)
+                ray = self.unmap(point + dxy).reshape(-1)
+                ray = ray / torch.linalg.norm(ray)
+                phi = torch.atan2(torch.linalg.norm(ray[:2]), ray[2])
+                focal += 0.125 / phi
+        return focal
+
+    def initialize_from(self, other_model, nonlinear_iterations=20):
+        self.set_focal(other_model.get_center_resolution_focal())
+        self.set_center(other_model.get_center())
+
+        n_points = int((self.image_shape[0] - self.get_center()[0]).item())
+        steps = torch.linspace(0, n_points, n_points).to(self.device)
+        pts2d = self.get_center() + steps.reshape(-1, 1) * torch.tensor([0.7, 0.7], device=self.device)
+        pts2d = pts2d.to(other_model.device)
+        pts3d = other_model.unmap(pts2d)
+        valid = ~torch.isnan(pts3d).any(dim=-1)
+        pts2d = pts2d[valid]
+        pts3d = pts3d[valid]
+
+        self.initialize_distortion_from_points(pts2d, pts3d) 
+        self.__initialize_from_nonlinear(pts2d, pts3d, nonlinear_iterations)
+    
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        warning = f"initialize_distortion_from_points is not implemented for {self.model_name} model"
+        warnings.warn(warning)
+
+    def __initialize_from_nonlinear(self, pts2d, pts3d, iterations):
+        for i in range(iterations):
+            proj, valid = self.map(pts3d)
+            valid &= ~torch.isnan(proj).all(dim=-1)
+        
+            if valid.sum() == 0: continue
+            def res(camera_data):
+                new_model = self.clone()
+                new_model._data = camera_data
+                pts2d_, _ = new_model.map(pts3d)
+                return pts2d_
+                
+            J = torch.autograd.functional.jacobian(res, self._data, vectorize=True)
+            err = proj[valid] - pts2d[valid]
+            J = J[valid]
+            J = J.reshape(err.shape[0], 2, -1)
+
+            H = (J.transpose(1, 2) @ J).mean(dim=0)
+            b = (J.transpose(1, 2) @ err[...,None]).mean(dim=0)
+            
+            H += 1e-6 * torch.eye(H.shape[0]).to(H)
+            step = torch.linalg.lstsq(H, b)[0].squeeze()
+            if torch.isnan(step).any() or torch.isinf(step).any():
+                break
+            self._data = self._data - step
+            err = torch.linalg.norm(err, dim=-1).mean()
+
+            print(f'Iteration {i}/{iterations} : Mean reprojection error {err.item()}')
 
     @property
     def dtype(self): return self._data.dtype

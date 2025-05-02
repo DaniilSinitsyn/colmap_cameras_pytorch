@@ -63,3 +63,20 @@ class OpenCVFisheye(BaseModel):
         z[mask] = r[mask] / torch.tan(theta[mask])
 
         return torch.cat((uv, z[...,None]), dim=-1)
+
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        r = torch.norm(pts3d[:, :2], dim=-1)
+        theta = torch.atan2(r, pts3d[:, 2])
+        theta2 = theta * theta
+        theta4 = theta2 * theta2
+        theta6 = theta4 * theta2
+        theta8 = theta4 * theta4
+
+        pts2d = (pts2d - self[2:4].reshape(1, 2)) / self[:2].reshape(1, 2)
+        pts2d = torch.linalg.norm(pts2d, dim=-1)
+        
+        mask = theta > self.EPSILON
+        b = pts2d[mask]/theta[mask] - 1
+        A = torch.stack([theta2[mask], theta4[mask], theta6[mask], theta8[mask]], dim=-1)
+        x = torch.linalg.lstsq(A, b, rcond=None).solution
+        self[4:] = x

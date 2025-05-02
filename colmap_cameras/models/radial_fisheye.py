@@ -76,3 +76,17 @@ class RadialFisheye(BaseModel):
 
 
         return torch.cat((uv, z[...,None]), dim=-1)
+
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        r = torch.norm(pts3d[:, :2], dim=-1)
+        theta = torch.atan2(r, pts3d[:, 2])
+        theta2 = theta * theta
+        theta4 = theta2 * theta2
+
+        pts2d = (pts2d - self[1:3].reshape(1, 2)) / self[0]
+        pts2d = torch.linalg.norm(pts2d, dim=-1)
+
+        b = pts2d - theta
+        A = torch.stack([theta * theta2, theta * theta4], dim=-1)
+        x = torch.linalg.lstsq(A, b, rcond=None).solution
+        self[3:] = x

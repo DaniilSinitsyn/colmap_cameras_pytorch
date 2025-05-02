@@ -43,7 +43,7 @@ class PolynomialDivisionModel(BaseModel):
         uv = points3d[:, :2] / norm[..., None]
         
         polynomials = torch.zeros(mask.sum(), self.num_extra_params + 2).to(points3d.device)
-        polynomials[:, 2:] = self[3:] * self[0]
+        polynomials[:, 2:] = self[3:]
         polynomials[:, 1] = -z
         polynomials[:, 0] = self[0]
        
@@ -59,7 +59,7 @@ class PolynomialDivisionModel(BaseModel):
         r = torch.norm(uv, dim=-1)
         p = torch.zeros_like(r)
         for i in reversed(range(self.num_extra_params)):
-            p = p * r + self[3 + i] * self[0]
+            p = p * r + self[3 + i]
         p = p * r * r + self[0]
 
         points3d = torch.cat([uv, p[...,None]], dim=-1)
