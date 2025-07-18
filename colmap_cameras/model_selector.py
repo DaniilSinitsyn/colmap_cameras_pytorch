@@ -41,6 +41,16 @@ def model_selector(model_name: str,
         data = torch.tensor(data[2:], dtype=dtype, device=device)
     return Model(data, image_shape)
 
+def model_selector_from_str(colmap_str : str, dtype=torch.float32,
+                            device='cpu'):
+    """
+    colmap_str -- colmap string representation of the camera model
+        for example : "PINHOLE 640 480 500 500 320 240"
+    """
+    camera_model = colmap_str.split()[0]
+    camera_params = torch.tensor([float(x) for x in colmap_str.split()[1:]])
+    return model_selector(camera_model, camera_params, dtype=dtype, device=device)
+
 def default_initialization(model_name: str, image_shape, device='cpu', ):
     models = {(model.model_name): model for model in colmap_models}
     if model_name not in models:
