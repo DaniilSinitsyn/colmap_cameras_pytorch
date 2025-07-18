@@ -19,15 +19,19 @@ git clone https://github.com/DaniilSinitsyn/colmap_cameras_pytorch.git
 ### Load camera from cameras.txt
 
 ```python
-impot torch
-from colmap_cameras_pytorch.colmap_cameras import model_selector
+import torch
+from colmap_cameras_pytorch.colmap_cameras import model_selector, model_selector_from_str
 
 # Model defined as a string in colmap cameras.txt
 camera_txt = "SIMPLE_RADIAL 100 100 100 50 50 0.3"
+
+# Create model based on the colmap string
+model = model_selector_from_str(camera_txt)
+
+# Manually create model from parameters and model name
 camera_model = camera_txt.split()[0]
 camera_params = torch.tensor([float(x) for x in camera_txt.split()[1:]])
 
-# Create model based on the colmap string
 model = model_selector(camera_model, camera_params)
 
 # project 3d points onto image
