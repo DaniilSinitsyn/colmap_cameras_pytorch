@@ -39,8 +39,7 @@ class SimpleRadial(BaseModel):
         v2 = uv[:, 1] * uv[:, 1]
 
         radial = 1 + self[3] * (u2 + v2)
-        uv *= radial[:, None]
-        return uv * self[0] + self[1:3].reshape(1, 2), valid
+        return uv * radial[:, None] * self[0] + self[1:3].reshape(1, 2), valid
 
     def unmap(self, points2d):
         uv = (points2d - self[1:3].reshape(1, 2)) / self[0]
