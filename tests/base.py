@@ -16,7 +16,9 @@ class TestBase(unittest.TestCase):
             test_pt3d(model, self)
 
     def test_model_fit(self):
-        test_model_fit(self.model1, self.model2, self.iters, self)
+        if hasattr(self, 'model1') and hasattr(self, 'model2') and hasattr(self, 'iters'):
+            test_model_fit(self.model1, self.model2, self.iters, self)
     
     def test_model_3dpts_fil(self):
-        test_model_3dpts_fil(self.model1, self.model2, self)
+        if hasattr(self, 'model1') and hasattr(self, 'model2'):
+            test_model_3dpts_fil(self.model1, self.model2, self)

@@ -14,3 +14,4 @@ from .polynomial_division_model import PolynomialDivisionModel
 from .unified_camera_model import UnifiedCameraModel
 from .meis_camera_model import MeisCameraModel
 from .woodscape import WoodScape
+from .equirectangular import Equirectangular
