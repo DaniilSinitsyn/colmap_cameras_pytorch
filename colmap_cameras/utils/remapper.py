@@ -28,10 +28,10 @@ class Remapper:
         points = torch.stack([ud.ravel(), vd.ravel()], dim=-1)
         points3d = model_out.unmap(points.float())
         points2d, valid = model_in.map(points3d)
-        
+
         points2d[~valid] = -1
         points2d = points2d.reshape(h, w, 2)
-        
+
         xlut = points2d[..., 0].cpu().numpy()
         ylut = points2d[..., 1].cpu().numpy()
         

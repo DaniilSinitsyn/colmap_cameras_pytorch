@@ -23,7 +23,7 @@ class TestFullOpenCV(TestBase):
 
         self.model1 = get_model(img_size, torch.tensor([-0.4, 0.2, -1e-3, 1e-3, 1e-4, 0.04, -0.01, 1e-3]))
         self.model2 = get_model(img_size, torch.tensor([-0.4, 0.25, -3e-3, 2e-3, 5e-4, 0.03, -0.02, 1e-3]))
-        self.model2._data[:2] *= 0.95
+        self.model2._data.data[:2] *= 0.95
 
         self.iters = 10
 

@@ -17,9 +17,11 @@ class IterativeUndistortion(torch.autograd.Function):
     def forward(ctx, params, pts2d, cam, max_iters):
         pts = pts2d.clone().detach()
         for _ in range(max_iters):
+            f = cam._distortion(pts) - pts2d
+            if f.abs().max() < 1e-10:
+                break
             J = cam._d_distortion_d_pts2d(pts)
             J_inv = torch.linalg.pinv(J)
-            f = cam._distortion(pts) - pts2d
             delta = J_inv @ f.unsqueeze(-1)
             pts = pts - delta.squeeze(-1)
 

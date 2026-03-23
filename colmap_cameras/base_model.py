@@ -6,40 +6,117 @@ Colmap camera models implemented in PyTorch
 import torch
 import warnings
 
-class BaseModel:
+
+class BaseModel(torch.nn.Module):
     """
-    Partially copilot generated class that behaves almost like a torch.Tensor
+    Base camera model. Inherits from torch.nn.Module.
+
+    Camera parameters are stored as a single nn.Parameter and can be
+    selectively fixed via fix()/unfix(). Principal point is fixed by default.
+
+    Example::
+
+        cam = model_selector_from_str("OPENCV 640 480 500 500 320 240 0.1 -0.05 0 0")
+        cam.fix('focal')
+        cam.unfix('center')
+        cam.fix(4, 5)               # fix individual params by index
+
+        optimizer = torch.optim.Adam(cam.parameters(), lr=1e-3)
     """
-    _image_shape : torch.Tensor
-    _data : torch.Tensor
-    ROOT_FINDING_MAX_ITERATIONS = 100
-    OPTIMIZATION_FIX_FOCALS = False
-    OPTIMIZATION_FIX_CENTER = True
-    OPTIMIZATION_FIX_EXTRA = False
+    _image_shape: torch.Tensor
+    _data: torch.nn.Parameter
+    ROOT_FINDING_MAX_ITERATIONS = 20
     EPSILON = 1e-6
 
     def __init__(self, data, image_shape):
-        self._data = data
-        self._image_shape = image_shape
+        super().__init__()
+
         if self.num_extra_params == -1:
             if data.shape[0] < self.num_focal_params + self.num_pp_params + 1:
-                raise ValueError(f"Expected at least {self.num_focal_params + self.num_pp_params + 1} parameters, got {data.shape[0]}")
+                raise ValueError(
+                    f"Expected at least {self.num_focal_params + self.num_pp_params + 1} "
+                    f"parameters, got {data.shape[0]}"
+                )
             self.num_extra_params = data.shape[0] - self.num_focal_params - self.num_pp_params
 
-        if data.shape[0] != self.num_focal_params + self.num_pp_params + self.num_extra_params:
-            raise ValueError(f"Expected {self.num_focal_params + self.num_pp_params + self.num_extra_params} parameters, got {data.shape[0]}")
-    
-    def __repr__(self):
-        f = f'{self.model_name}' + ': {'
-        image_size = f'{self._image_shape.tolist()}'
-        focals = f'{self[:self.num_focal_params].tolist()}'
-        pp = f'{self[self.num_focal_params:self.num_focal_params + self.num_pp_params].tolist()}'
-        extra = f'{self[self.num_focal_params + self.num_pp_params:].tolist()}'
-        f = f + '\n\timage_size: ' + image_size
-        f = f + '\n\tfocals: ' + focals
-        f = f + '\n\tpp: ' + pp
-        f = f + '\n\textra: ' + extra + '\n}'
-        return f
+        expected = self.num_focal_params + self.num_pp_params + self.num_extra_params
+        if data.shape[0] != expected:
+            raise ValueError(f"Expected {expected} parameters, got {data.shape[0]}")
+
+        if isinstance(data, torch.nn.Parameter):
+            self._data = data
+        else:
+            self._data = torch.nn.Parameter(data, requires_grad=False)
+        self.register_buffer('_image_shape', image_shape)
+        self.register_buffer('_grad_mask', torch.ones(data.shape[0], dtype=data.dtype, device=data.device))
+
+        if self.num_pp_params > 0:
+            self.fix('center')
+
+    # ----- Fixing / unfixing parameters ------------------------------------
+
+    def _mask_gradient(self, grad):
+        return grad * self._grad_mask
+
+    def _resolve_indices(self, params):
+        focal_end = self.num_focal_params
+        pp_end = focal_end + self.num_pp_params
+        total = self._data.shape[0]
+        indices = []
+        for p in params:
+            if p == 'focal':
+                indices.extend(range(0, focal_end))
+            elif p == 'center':
+                indices.extend(range(focal_end, pp_end))
+            elif p == 'extra':
+                indices.extend(range(pp_end, total))
+            elif isinstance(p, int):
+                if p < 0 or p >= total:
+                    raise IndexError(f"Parameter index {p} out of range [0, {total})")
+                indices.append(p)
+            else:
+                raise ValueError(
+                    f"Unknown parameter specifier '{p}'. "
+                    "Use 'focal', 'center', 'extra', or an integer index."
+                )
+        return indices
+
+    def fix(self, *params):
+        """Fix parameters so they receive zero gradient.
+
+        Args:
+            *params: 'focal', 'center', 'extra', or integer indices.
+        """
+        indices = self._resolve_indices(params)
+        with torch.no_grad():
+            for i in indices:
+                self._grad_mask[i] = 0.0
+        return self
+
+    def unfix(self, *params):
+        """Unfix parameters so they receive gradient again.
+
+        Args:
+            *params: 'focal', 'center', 'extra', or integer indices.
+        """
+        indices = self._resolve_indices(params)
+        with torch.no_grad():
+            for i in indices:
+                self._grad_mask[i] = 1.0
+        return self
+
+    @property
+    def fixed(self):
+        """Dict showing which parameter groups are fully fixed."""
+        focal_end = self.num_focal_params
+        pp_end = focal_end + self.num_pp_params
+        return {
+            'focal': bool((self._grad_mask[:focal_end] == 0).all()),
+            'center': bool((self._grad_mask[focal_end:pp_end] == 0).all()) if self.num_pp_params > 0 else True,
+            'extra': bool((self._grad_mask[pp_end:] == 0).all()) if self.num_extra_params > 0 else True,
+        }
+
+    # ----- Projection interface --------------------------------------------
 
     def map(self, points3d):
         raise NotImplementedError
@@ -47,80 +124,86 @@ class BaseModel:
     def unmap(self, points2d):
         raise NotImplementedError
 
+    # ----- Tensor-like interface -------------------------------------------
+
+    def __repr__(self):
+        f = f'{self.model_name}' + ': {'
+        image_size = f'{self._image_shape.tolist()}'
+        focals = f'{self._data[:self.num_focal_params].tolist()}'
+        pp = f'{self._data[self.num_focal_params:self.num_focal_params + self.num_pp_params].tolist()}'
+        extra = f'{self._data[self.num_focal_params + self.num_pp_params:].tolist()}'
+        fixed_info = ', '.join(k for k, v in self.fixed.items() if v)
+        f += '\n\timage_size: ' + image_size
+        f += '\n\tfocals: ' + focals
+        f += '\n\tpp: ' + pp
+        f += '\n\textra: ' + extra
+        if fixed_info:
+            f += '\n\tfixed: ' + fixed_info
+        f += '\n}'
+        return f
+
     @property
     def image_shape(self):
         return self._image_shape
-    
+
     def check_bounds(self, points2d):
-        return (points2d >= 0).all(dim=-1) & (points2d[:, 0] <= self._image_shape[0]-1) & (points2d[:, 1] <= self._image_shape[1]-1)   
-    def clone(self, *args, **kwargs):
-        return type(self)(self._data.clone(*args, **kwargs), self._image_shape.clone(*args, **kwargs))
-    
+        return (
+            (points2d >= 0).all(dim=-1)
+            & (points2d[:, 0] <= self._image_shape[0] - 1)
+            & (points2d[:, 1] <= self._image_shape[1] - 1)
+        )
+
+    def clone(self):
+        new = type(self)(self._data.data.clone(), self._image_shape.clone())
+        new._grad_mask.copy_(self._grad_mask)
+        return new
+
     def __getitem__(self, idx):
-        focal_end = self.num_focal_params
-        pp_end = focal_end + self.num_pp_params
-        if self.OPTIMIZATION_FIX_CENTER or self.OPTIMIZATION_FIX_FOCALS or self.OPTIMIZATION_FIX_EXTRA:
-            if type(idx) == slice:
-                if idx.start == None: idx = slice(0, idx.stop)
-                if idx.stop == None: idx = slice(idx.start, self._data.shape[0])
-                
-                if self.OPTIMIZATION_FIX_FOCALS and idx.start < focal_end and idx.stop <= focal_end:
-                    return self._data[idx].detach()
-                if self.OPTIMIZATION_FIX_CENTER and idx.start >= focal_end and idx.stop <= pp_end:
-                    return self._data[idx].detach()
-                if self.OPTIMIZATION_FIX_EXTRA and idx.start >= pp_end and idx.stop <= self._data.shape[0]:
-                    return self._data[idx].detach()
-
-            else:
-                if self.OPTIMIZATION_FIX_FOCALS and idx < focal_end:
-                    return self._data[idx].detach()
-                if self.OPTIMIZATION_FIX_CENTER and idx >= focal_end and idx < pp_end:
-                    return self._data[idx].detach()
-                if self.OPTIMIZATION_FIX_EXTRA and idx >= pp_end and idx < self._data.shape[0]:
-                    return self._data[idx].detach()
-
-        return  self._data[idx]
+        result = self._data[idx]
+        mask = self._grad_mask[idx]
+        if not mask.all():
+            if mask.ndim == 0 or not mask.any():
+                return result.detach()
+            result = result * mask + result.detach() * (1 - mask)
+        return result
 
     def __setitem__(self, idx, value):
-        self._data[idx] = value
-
-    def cpu(self):
-        return type(self)(self._data.cpu(), self._image_shape.cpu())
-    
-    def cuda(self, device=None):
-        return type(self)(self._data.cuda(device), self._image_shape.cuda(device))
+        with torch.no_grad():
+            self._data[idx] = value
 
     def detach(self):
-        return type(self)(self._data.detach(), self._image_shape.detach())
+        return type(self)(self._data.data.detach().clone(), self._image_shape.detach().clone())
 
-    def to(self, *args, **kwargs):
-        return type(self)(self._data.to(*args, **kwargs), self._image_shape.to(*args, **kwargs))
-    
     def to_colmap(self):
-        sh = list(map(str, self._image_shape.tolist()))
-        fp = list(map(str, self[:self.num_focal_params].tolist()))
-        pp = list(map(str, self[self.num_focal_params:self.num_focal_params + self.num_pp_params].tolist()))
-        ep = list(map(str, self[self.num_focal_params + self.num_pp_params:].tolist()))
+        with torch.no_grad():
+            sh = list(map(str, self._image_shape.tolist()))
+            fp = list(map(str, self._data[:self.num_focal_params].tolist()))
+            pp = list(map(str, self._data[self.num_focal_params:self.num_focal_params + self.num_pp_params].tolist()))
+            ep = list(map(str, self._data[self.num_focal_params + self.num_pp_params:].tolist()))
         f = f'{self.model_name} ' + ' '.join(sh) + ' '
-        f = f + ' '.join(fp) + ' ' + ' '.join(pp) + ' ' + ' '.join(ep)
+        f += ' '.join(fp) + ' ' + ' '.join(pp) + ' ' + ' '.join(ep)
         return f
-    
+
     def get_focal(self):
-        return self[:self.num_focal_params].mean()
+        return self._data[:self.num_focal_params].mean()
+
     def get_center(self):
-        return self[self.num_focal_params:self.num_focal_params + self.num_pp_params]
-    
+        return self._data[self.num_focal_params:self.num_focal_params + self.num_pp_params]
+
     def set_focal(self, value):
-        self[:self.num_focal_params] = value
+        with torch.no_grad():
+            self._data[:self.num_focal_params] = value
 
     def set_center(self, value):
-        self[self.num_focal_params:self.num_focal_params + self.num_pp_params] = value
+        with torch.no_grad():
+            self._data[self.num_focal_params:self.num_focal_params + self.num_pp_params] = value
 
     def get_center_resolution_focal(self):
         focal = 0.0
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0: continue
+                if dx == 0 and dy == 0:
+                    continue
                 point = self.get_center()
                 dxy = torch.tensor([dx, dy]).to(point)
                 dxy = dxy / torch.linalg.norm(dxy)
@@ -143,55 +226,64 @@ class BaseModel:
         pts2d = pts2d[valid]
         pts3d = pts3d[valid]
 
-        self.initialize_distortion_from_points(pts2d, pts3d) 
-        self.__initialize_from_nonlinear(pts2d, pts3d, nonlinear_iterations)
-    
+        self.initialize_distortion_from_points(pts2d, pts3d)
+        self.__initialize_from_nonlinear(pts2d.detach(), pts3d.detach(), nonlinear_iterations)
+
     def initialize_distortion_from_points(self, pts2d, pts3d):
         warning = f"initialize_distortion_from_points is not implemented for {self.model_name} model"
         warnings.warn(warning)
 
     def __initialize_from_nonlinear(self, pts2d, pts3d, iterations):
+        self.requires_grad = True
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=iterations)
+
         for i in range(iterations):
+            optimizer.zero_grad()
             proj, valid = self.map(pts3d)
             valid &= ~torch.isnan(proj).all(dim=-1)
-        
-            if valid.sum() == 0: continue
-            def res(camera_data):
-                new_model = self.clone()
-                new_model._data = camera_data
-                pts2d_, _ = new_model.map(pts3d)
-                return pts2d_
-                
-            J = torch.autograd.functional.jacobian(res, self._data, vectorize=True)
-            err = proj[valid] - pts2d[valid]
-            J = J[valid]
-            J = J.reshape(err.shape[0], 2, -1)
+            if valid.sum() == 0:
+                continue
+            err = ((proj[valid] - pts2d[valid]) ** 2).mean()
+            err.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+            optimizer.step()
+            scheduler.step()
 
-            H = (J.transpose(1, 2) @ J).mean(dim=0)
-            b = (J.transpose(1, 2) @ err[...,None]).mean(dim=0)
-            
-            H += 1e-6 * torch.eye(H.shape[0]).to(H)
-            step = torch.linalg.lstsq(H, b)[0].squeeze()
-            if torch.isnan(step).any() or torch.isinf(step).any():
-                break
-            self._data = self._data - step
-            err = torch.linalg.norm(err, dim=-1).mean()
+            if i % max(1, iterations // 5) == 0:
+                print(f'Iteration {i}/{iterations} : Mean reprojection error {err.item()}')
 
-            print(f'Iteration {i}/{iterations} : Mean reprojection error {err.item()}')
+        self.requires_grad = False
+
+    # ----- Properties ------------------------------------------------------
 
     @property
-    def dtype(self): return self._data.dtype
-    @property
-    def device(self): return self._data.device
-    @property
-    def ndim(self): return self._data.ndim
-    @property
-    def shape(self): return self._data.shape
-    @property
-    def size(self): return self._data.size()
+    def dtype(self):
+        return self._data.dtype
 
-    def get_requires_grad(self):
+    @property
+    def device(self):
+        return self._data.device
+
+    @property
+    def ndim(self):
+        return self._data.ndim
+
+    @property
+    def shape(self):
+        return self._data.shape
+
+    @property
+    def size(self):
+        return self._data.size()
+
+    @property
+    def requires_grad(self):
         return self._data.requires_grad
-    def set_requires_grad(self, value: bool):
-        self._data.requires_grad = value
-    requires_grad = property(get_requires_grad, set_requires_grad)
+
+    @requires_grad.setter
+    def requires_grad(self, value: bool):
+        self._data.requires_grad_(value)
+        if value and not hasattr(self, '_grad_hook_registered'):
+            self._data.register_hook(self._mask_gradient)
+            self._grad_hook_registered = True

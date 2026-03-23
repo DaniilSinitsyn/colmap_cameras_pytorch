@@ -21,10 +21,10 @@ class DivisionModel(BaseModel):
     def __init__(self, x, image_shape, scale_from_focal=True):
         super().__init__(x, image_shape)
         if scale_from_focal:
-            self.scale = x[0].clone()
+            self.register_buffer('scale', x[0].detach().clone())
             self[0] = 1.0
         else:
-            self.scale = torch.linalg.norm(image_shape.float())
+            self.register_buffer('scale', torch.linalg.norm(image_shape.float()))
 
     @staticmethod
     def default_initialization(image_shape):

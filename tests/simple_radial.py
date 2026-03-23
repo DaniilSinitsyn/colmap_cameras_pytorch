@@ -24,7 +24,7 @@ class TestSimpleRadial(TestBase):
 
         self.model1 = get_model(img_size, 0.1)
         self.model2 = get_model(img_size, 0.15)
-        self.model2._data[0] *= 0.9
+        self.model2._data.data[0] *= 0.9
 
         self.iters = 10
 

@@ -23,7 +23,7 @@ class TestUnifiedCameraModel(TestBase):
 
         self.model1 = get_model(img_size, 1.2)
         self.model2 = get_model(img_size, 1.5)
-        self.model2._data[:2] *= 0.9
+        self.model2._data.data[:2] *= 0.9
         self.iters = 10
 
 if __name__ == '__main__':

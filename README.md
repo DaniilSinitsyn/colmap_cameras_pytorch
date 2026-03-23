@@ -2,7 +2,7 @@
 
 This repository contains PyTorch implementations of the camera models used in the [COLMAP](https://colmap.github.io/) structure-from-motion pipeline.
 
-The camera models support **automatic differentiation** for `project` and `backproject` functions. Which for some reason are called `map` and `unmap` in this repo.
+Camera models are `torch.nn.Module` subclasses with full **automatic differentiation** for `map` (project) and `unmap` (backproject) operations.
 
 > This code was mainly developed for my own research purposes.
 
@@ -43,11 +43,11 @@ points_3d = model.unmap(points_2d)
 
 ### Optimizing camera parameters
 
-As everything is differentiable, you can optimize camera parameters using PyTorch's optimizers.
+Camera models are `torch.nn.Module` subclasses. Enable gradients and use any PyTorch optimizer:
 
 ```python
-model.require_grad = True
-optimizer = torch.optim.Adam([model._data], lr=0.01)
+model.requires_grad = True
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
 for _ in range(iterations):
     optimizer.zero_grad()
@@ -57,18 +57,19 @@ for _ in range(iterations):
     optimizer.step()
 ```
 
-By default camera's center is fixed. If you want to optimize it too:
+### Fixing parameters
+
+By default the principal point (center) is fixed. Use `fix()` / `unfix()` to control which parameters are optimized:
 
 ```python
-model.OPTIMIZATION_FIX_CENTER = False
+model.unfix('center')           # unfix principal point
+model.fix('focal')              # fix focal length
+model.fix(4, 5)                 # fix individual params by index
+
+print(model.fixed)              # {'focal': True, 'center': False, 'extra': False}
 ```
 
-There are in total 4 flags that can be set for each camera:
-
-- `OPTIMIZATION_FIX_FOCALS`: Fix focal lengthes (default: `False`)
-- `OPTIMIZATION_FIX_CENTER`: Fix principal point (default: `True`)
-- `OPTIMIZATION_FIX_EXTRA`: Fix extra parameters (default: `False`)
-- `ROOT_FINDING_MAX_ITERATIONS`: Number of iterations for root finding (default: `50`)
+Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 
 
 ### Camera models
@@ -100,11 +101,11 @@ params = torch.tensor([100, 100, 50, 50]).float()
 model = Pinhole(params, image_shape)
 ```
 
-## Usefu stuff
+## Useful stuff
 
 ### Apps
 
-[`apps.refit_model`](apps/refit_model.py) is a simple script that uses Gauss-Newton optimization to fit one camera model to another.
+[`apps.refit_model`](apps/refit_model.py) is a simple script that fits one camera model to another.
 
 ```bash
 python3 -m apps.refit_model --input_camera "SIMPLE_RADIAL 100 100 100 50 50 0.3"  --output_camera "RADIAL_FISHEYE" --iterations 20
@@ -115,9 +116,9 @@ python3 -m apps.refit_model --input_camera "SIMPLE_RADIAL 100 100 100 50 50 0.3"
 [`colmap_cameras.utils.remapper`](colmap_cameras/utils/remapper.py) is a class that can be used to remap one camera model to another.
 
 ```python
-from colmap_cameras_pytorch.colmap_cameras.util.remapper import Remapper
+from colmap_cameras_pytorch.colmap_cameras.utils.remapper import Remapper
 remapper = Remapper(step = 4) # the step of arange for the image grid
-img = remapper.remap(model_in, model_out, img_path) 
+img = remapper.remap(model_in, model_out, img_path)
 img = remapper.remap_from_fov(model_in, fov_out, img_path) # fov in degrees
 ```
 
@@ -142,7 +143,3 @@ python3 -m tests.run_tests -v
 - [ ] Add remap app, that generates remaps alongside with a class to run them.
 - [ ] Estimate image area where camera is valid for each model. (Basically to check whether distortion is monotonic)
 - [ ] Visualisation util for the previous point.
-
-
-
-

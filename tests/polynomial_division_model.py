@@ -25,7 +25,7 @@ class TestPolynomialDivisionModel(TestBase):
         self.model1 = get_model(img_size, [-5.6947, 25.8308,-49.7256])
         self.model2 = get_model(img_size, [-8.6947, 27.8308,-59.7256])
 
-        self.iters = 50
+        self.iters = 10
 
 if __name__ == '__main__':
     unittest.main()

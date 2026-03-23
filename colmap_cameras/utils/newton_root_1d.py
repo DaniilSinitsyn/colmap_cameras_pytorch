@@ -22,11 +22,12 @@ class NewtonRoot1D(torch.autograd.Function):
         for iteration in range(max_iter):
             f = torch.zeros_like(new_r)
             df = torch.zeros_like(new_r)
-            # compute by Hornes scheme we should reverse range
             for p_i in reversed(range(polynomial.shape[1])):
                 f = f * new_r + polynomial[:, p_i]
                 if p_i > 0:
                     df = df * new_r + polynomial[:, p_i] * p_i
+            if f.abs().max() < 1e-10:
+                break
             new_r = new_r - f / df
         
         df = torch.zeros_like(new_r)

@@ -21,7 +21,7 @@ class PolynomialDivisionModel(BaseModel):
 
     def __init__(self, x, image_shape):
         super().__init__(x, image_shape)
-        self.scale = torch.linalg.norm(image_shape.float())
+        self.register_buffer('scale', torch.linalg.norm(image_shape.float()))
 
     @staticmethod
     def default_initialization(image_shape):
