@@ -40,78 +40,90 @@ class FullOpenCV(BaseModel):
         return torch.cat((dist_uv, torch.ones_like(uv[:, :1])), dim=-1)
 
     def _distortion(self, pts2d):
+        # COLMAP order: k1, k2, p1, p2, k3, k4, k5, k6
+        k1, k2, p1, p2, k3, k4, k5, k6 = [self[4+i] for i in range(8)]
+
         u2 = pts2d[:, 0] ** 2
         v2 = pts2d[:, 1] ** 2
         uv = pts2d[:, 0] * pts2d[:, 1]
         r2 = u2 + v2
 
-        radial = 1 + (self[4] + (self[5] + self[6] * r2) * r2) * r2
-        radial /=  (1 + (self[7] + (self[8] + self[9] * r2) * r2) * r2)
+        radial = 1 + (k1 + (k2 + k3 * r2) * r2) * r2
+        radial /= (1 + (k4 + (k5 + k6 * r2) * r2) * r2)
 
-        tg_u = 2 * self[10] * uv + self[11] * (r2 + 2 * u2)
-        tg_v = 2 * self[11] * uv + self[10] * (r2 + 2 * v2)
+        tg_u = 2 * p1 * uv + p2 * (r2 + 2 * u2)
+        tg_v = 2 * p2 * uv + p1 * (r2 + 2 * v2)
 
         new_pts2d = pts2d * radial[:, None]
-        new_pts2d += torch.stack((tg_u, tg_v), dim=-1) 
-        
+        new_pts2d += torch.stack((tg_u, tg_v), dim=-1)
+
         return new_pts2d
     
     def _d_distortion_d_params(self, pts2d):
+        # COLMAP order: k1, k2, p1, p2, k3, k4, k5, k6
+        k1, k2, p1, p2, k3, k4, k5, k6 = [self[4+i] for i in range(8)]
+
         u2 = pts2d[:, 0] ** 2
         v2 = pts2d[:, 1] ** 2
         uv = pts2d[:, 0] * pts2d[:, 1]
-
         r2 = u2 + v2
 
-        num = 1 + (self[4] + (self[5] + self[6] * r2) * r2) * r2
-        denom =  (1 + (self[7] + (self[8] + self[9] * r2) * r2) * r2)
-
+        num = 1 + (k1 + (k2 + k3 * r2) * r2) * r2
+        denom = (1 + (k4 + (k5 + k6 * r2) * r2) * r2)
         denom_inv = 1.0 / denom
         denom2 = denom_inv * denom_inv
 
         res = torch.zeros(pts2d.shape[0], 2, 8).to(pts2d)
+        # d/dk1 (index 0)
         res[:, 0, 0] = pts2d[:, 0] * r2 * denom_inv
         res[:, 1, 0] = pts2d[:, 1] * r2 * denom_inv
+        # d/dk2 (index 1)
         res[:, 0, 1] = res[:, 0, 0] * r2
         res[:, 1, 1] = res[:, 1, 0] * r2
-        res[:, 0, 2] = res[:, 0, 1] * r2
-        res[:, 1, 2] = res[:, 1, 1] * r2
-
-        res[:, 0, 3] = -pts2d[:, 0] * num * r2 * denom2
-        res[:, 1, 3] = -pts2d[:, 1] * num * r2 * denom2
-        res[:, 0, 4] = res[:, 0, 3] * r2
-        res[:, 1, 4] = res[:, 1, 3] * r2
-        res[:, 0, 5] = res[:, 0, 4] * r2
-        res[:, 1, 5] = res[:, 1, 4] * r2
-
-        res[:, 0, 6] = 2 * uv
-        res[:, 1, 6] = r2 + 2 * v2
-        res[:, 0, 7] = r2 + 2 * u2
-        res[:, 1, 7] = res[:, 0, 6]
+        # d/dp1 (index 2)
+        res[:, 0, 2] = 2 * uv
+        res[:, 1, 2] = r2 + 2 * v2
+        # d/dp2 (index 3)
+        res[:, 0, 3] = r2 + 2 * u2
+        res[:, 1, 3] = 2 * uv
+        # d/dk3 (index 4)
+        res[:, 0, 4] = res[:, 0, 0] * r2 * r2
+        res[:, 1, 4] = res[:, 1, 0] * r2 * r2
+        # d/dk4 (index 5)
+        res[:, 0, 5] = -pts2d[:, 0] * num * r2 * denom2
+        res[:, 1, 5] = -pts2d[:, 1] * num * r2 * denom2
+        # d/dk5 (index 6)
+        res[:, 0, 6] = res[:, 0, 5] * r2
+        res[:, 1, 6] = res[:, 1, 5] * r2
+        # d/dk6 (index 7)
+        res[:, 0, 7] = res[:, 0, 6] * r2
+        res[:, 1, 7] = res[:, 1, 6] * r2
 
         return res
 
 
     def _d_distortion_d_pts2d(self, pts2d):
+        # COLMAP order: k1, k2, p1, p2, k3, k4, k5, k6
+        k1, k2, p1, p2, k3, k4, k5, k6 = [self[4+i] for i in range(8)]
+
         u2 = pts2d[:, 0] ** 2
         v2 = pts2d[:, 1] ** 2
         r2 = u2 + v2
 
-        num = 1 + (self[4] + (self[5] + self[6] * r2) * r2) * r2
-        denom =  (1 + (self[7] + (self[8] + self[9] * r2) * r2) * r2)
+        num = 1 + (k1 + (k2 + k3 * r2) * r2) * r2
+        denom = (1 + (k4 + (k5 + k6 * r2) * r2) * r2)
 
         res = torch.eye(2).to(pts2d).unsqueeze(0).repeat(pts2d.shape[0], 1, 1)
-
         res *= (num / denom)[..., None, None]
 
-        dv_t = (2 * self[4] + (4 * self[5] + 6 * self[6] * r2) * r2) * pts2d[:, 1]
-        du_t = (2 * self[4] + (4 * self[5] + 6 * self[6] * r2) * r2) * pts2d[:, 0]
+        dv_t = (2 * k1 + (4 * k2 + 6 * k3 * r2) * r2) * pts2d[:, 1]
+        du_t = (2 * k1 + (4 * k2 + 6 * k3 * r2) * r2) * pts2d[:, 0]
 
-        dv_d = (2 * self[7] + (4 * self[8] + 6 * self[9] * r2) * r2) * pts2d[:, 1]
-        du_d = (2 * self[7] + (4 * self[8] + 6 * self[9] * r2) * r2) * pts2d[:, 0]
+        dv_d = (2 * k4 + (4 * k5 + 6 * k6 * r2) * r2) * pts2d[:, 1]
+        du_d = (2 * k4 + (4 * k5 + 6 * k6 * r2) * r2) * pts2d[:, 0]
 
         denom2 = 1.0 / (denom * denom)
-        
+
         dv = (dv_t * denom - dv_d * num) * denom2
         du = (du_t * denom - du_d * num) * denom2
 
@@ -119,10 +131,10 @@ class FullOpenCV(BaseModel):
         res[:,1,1] += pts2d[:, 1] * dv
         res[:,0,1] += pts2d[:, 0] * dv
         res[:,1,0] += pts2d[:, 1] * du
-        
-        res[:,0,0] += 2 * self[10] * pts2d[:, 1] + 6 * self[11] * pts2d[:, 0]
-        res[:,1,1] += 2 * self[11] * pts2d[:, 0] + 6 * self[10] * pts2d[:, 1]
-        res[:,0,1] += 2 * self[10] * pts2d[:, 0] + 2 * self[11] * pts2d[:, 1]
-        res[:,1,0] += 2 * self[11] * pts2d[:, 1] + 2 * self[10] * pts2d[:, 0]
+
+        res[:,0,0] += 2 * p1 * pts2d[:, 1] + 6 * p2 * pts2d[:, 0]
+        res[:,1,1] += 2 * p2 * pts2d[:, 0] + 6 * p1 * pts2d[:, 1]
+        res[:,0,1] += 2 * p1 * pts2d[:, 0] + 2 * p2 * pts2d[:, 1]
+        res[:,1,0] += 2 * p2 * pts2d[:, 1] + 2 * p1 * pts2d[:, 0]
 
         return res
