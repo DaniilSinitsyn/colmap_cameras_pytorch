@@ -14,7 +14,8 @@ class Remapper:
     def __init__(self, step=1):
         self.step = step
 
-    def remap(self, model_in, model_out, img):
+    def compute_lut(self, model_in, model_out):
+        """Compute remap look-up tables (x and y maps) from model_out to model_in."""
         w_i, h_i = [int(x.item()) for x in model_out.image_shape]
         device = model_out.device
         assert model_in.device == device, "Models should be on the same device"
@@ -32,16 +33,21 @@ class Remapper:
         points2d[~valid] = -1
         points2d = points2d.reshape(h, w, 2)
 
-        xlut = points2d[..., 0].cpu().numpy()
-        ylut = points2d[..., 1].cpu().numpy()
-        
+        xlut = points2d[..., 0].cpu().numpy().astype(np.float32)
+        ylut = points2d[..., 1].cpu().numpy().astype(np.float32)
+        return xlut, ylut
+
+    def remap(self, model_in, model_out, img):
+        w_i, h_i = [int(x.item()) for x in model_out.image_shape]
+        xlut, ylut = self.compute_lut(model_in, model_out)
+
         if isinstance(img, str):
             img = cv2.imread(img)
 
         img = cv2.remap(img, xlut, ylut, cv2.INTER_LINEAR)
         img = cv2.resize(img, (w_i, h_i))
         return img
-    
+
     def remap_from_fov(self, model_in, fov_out, img):
         model_out = SimplePinhole.from_fov(fov_out, model_in.image_shape).to(model_in.device)
         return self.remap(model_in, model_out, img)

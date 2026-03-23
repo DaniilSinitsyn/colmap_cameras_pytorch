@@ -126,8 +126,6 @@ img = remapper.remap_from_fov(model_in, fov_out, img_path) # fov in degrees
 
 Some camera models require solving polynomial roots. [For high-order polynomials, the only way to do this is to use a numerical solver.](https://en.wikipedia.org/wiki/Abel–Ruffini_theorem)
 
->I don't like the fact that automatic differentiation goes through Newton's method or the QR algorithm.
-
 This repo contains an extention of `torch.autograd.Function` for [Newton's method](colmap_cameras/utils/newton_root_1d.py) and [Companion matrix root solver](colmap_cameras/utils/companion_matrix_root_1d.py).
 
 
@@ -139,7 +137,29 @@ To run tests:
 python3 -m tests.run_tests -v
 ```
 
+### Generating and using LUTs
+
+The undistort app can save look-up tables for fast remapping without recomputing the projection:
+
+```bash
+python3 -m apps.undistort \
+  --input_camera "OPENCV_FISHEYE 640 480 500 500 320 240 0.1 -0.05 0.01 -0.005" \
+  --fov 120 --output_size 512 \
+  --save_lut ./my_lut \
+  --img_path input.png --output undistorted.png
+```
+
+A standalone `lut_remapper.py` is copied into the output directory. Use it to remap images without any torch dependency:
+
+```python
+from lut_remapper import LutRemapper
+remapper = LutRemapper('./my_lut/lut.npz')
+img = remapper.remap('input.png')  # validates input image size
+```
+
+`--output_size` accepts one number (square) or two (width height).
+
 ## TODO
-- [ ] Add remap app, that generates remaps alongside with a class to run them.
+- [x] Add remap app, that generates remaps alongside with a class to run them.
 - [ ] Estimate image area where camera is valid for each model. (Basically to check whether distortion is monotonic)
 - [ ] Visualisation util for the previous point.
