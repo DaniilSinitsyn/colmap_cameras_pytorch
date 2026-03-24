@@ -28,7 +28,7 @@ class MeisCameraModel(BaseModel):
 
     def map(self, points3d):
         d = torch.linalg.norm(points3d, dim=-1)
-        valid = d[..., 2] + self[4] * d > self.EPSILON
+        valid = points3d[..., 2] + self[4] * d > self.EPSILON
         uv = points3d[:, :2] / (points3d[..., 2] + self[4] * d)[..., None]
 
         uv[valid] = self._distortion(uv[valid])

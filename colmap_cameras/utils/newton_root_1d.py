@@ -1,55 +1,42 @@
 """
 2024 Daniil Sinitsyn
 
-Newton method based polynomial solver with jacobians
+Newton method based polynomial solver — differentiable through the iterations.
 """
 import torch
 
-class NewtonRoot1D(torch.autograd.Function):
+
+def newton_root_1d(r, polynomial, max_iter):
+    """Find a root of a polynomial near initial guess r using Newton's method.
+
+    Differentiable w.r.t. polynomial coefficients via autograd through
+    the iteration steps.
+
+    Args:
+        r: (B,) initial guess
+        polynomial: (B, D) coefficients [a_0, a_1, ..., a_{D-1}]
+            representing a_0 + a_1*x + a_2*x^2 + ...
+        max_iter: maximum number of Newton steps
+
+    Returns:
+        (B,) approximate root
     """
-    polynomial is supposed to be a torch.Tensor
-    with following structure:
-    a_0 + a_1 * x + a_2 * x^2 + ... + a_n * x^n
-    [a_0, a_1, a_2, ..., a_n]
-    """
-    @staticmethod
-    def forward(ctx, r, polynomial, max_iter):
-        """
-        r -          (B) initial estimation for the root
-        polynomial - (BxDegree) polynomial coefficients
-        """
-        new_r = r.clone().detach()
-        for iteration in range(max_iter):
-            f = torch.zeros_like(new_r)
-            df = torch.zeros_like(new_r)
-            for p_i in reversed(range(polynomial.shape[1])):
-                f = f * new_r + polynomial[:, p_i]
-                if p_i > 0:
-                    df = df * new_r + polynomial[:, p_i] * p_i
-            if f.abs().max() < 1e-10:
-                break
-            new_r = new_r - f / df
-        
+    new_r = r.clone()
+    for _ in range(max_iter):
+        f = torch.zeros_like(new_r)
         df = torch.zeros_like(new_r)
         for p_i in reversed(range(polynomial.shape[1])):
+            f = f * new_r + polynomial[:, p_i]
             if p_i > 0:
                 df = df * new_r + polynomial[:, p_i] * p_i
-        
-        ctx.save_for_backward(df, new_r, polynomial)
-        return new_r
+        if f.detach().abs().max() < 1e-10:
+            break
+        new_r = new_r - f / df
+    return new_r
 
+
+# Keep backward-compatible class name as alias
+class NewtonRoot1D:
     @staticmethod
-    @torch.autograd.function.once_differentiable
-    def backward(ctx, grad_output):
-        df, new_r, polynomial = ctx.saved_tensors
-        
-        grad_polynomial = None
-        
-        if ctx.needs_input_grad[1]:
-            r = torch.ones_like(new_r)
-            grad_polynomial = torch.zeros_like(polynomial)
-            for i in range(0, polynomial.shape[1]):
-                grad_polynomial[:,i] = -grad_output* r / df
-                r = r * new_r
-
-        return None, grad_polynomial, None
+    def apply(r, polynomial, max_iter):
+        return newton_root_1d(r, polynomial, max_iter)

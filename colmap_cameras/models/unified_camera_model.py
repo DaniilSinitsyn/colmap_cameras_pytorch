@@ -28,7 +28,7 @@ class UnifiedCameraModel(BaseModel):
 
     def map(self, points3d):
         d = torch.linalg.norm(points3d, dim=-1)
-        valid = d[..., 2] + self[4] * d > self.EPSILON
+        valid = points3d[..., 2] + self[4] * d > self.EPSILON
         uv = points3d[:, :2] / (points3d[..., 2] + self[4] * d)[..., None]
 
         return uv * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2), valid

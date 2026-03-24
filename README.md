@@ -159,7 +159,24 @@ img = remapper.remap('input.png')  # validates input image size
 
 `--output_size` accepts one number (square) or two (width height).
 
+### Valid region estimation
+
+Estimate and visualize where the camera distortion is locally injective (Jacobian determinant > 0):
+
+```bash
+python3 -m apps.valid_region \
+  --input_camera "OPENCV_FISHEYE 640 480 300 300 320 240 0.1 -0.05 0.01 -0.005" \
+  --img_path input.png --output valid_region.png
+```
+
+Programmatic usage:
+
+```python
+from colmap_cameras.utils.valid_region import estimate_valid_region
+valid_mask = estimate_valid_region(camera)  # (H, W) bool tensor
+```
+
 ## TODO
 - [x] Add remap app, that generates remaps alongside with a class to run them.
-- [ ] Estimate image area where camera is valid for each model. (Basically to check whether distortion is monotonic)
-- [ ] Visualisation util for the previous point.
+- [x] Estimate image area where camera is valid for each model. (Basically to check whether distortion is monotonic)
+- [x] Visualisation util for the previous point.
