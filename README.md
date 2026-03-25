@@ -101,6 +101,51 @@ params = torch.tensor([100, 100, 50, 50]).float()
 model = Pinhole(params, image_shape)
 ```
 
+### Valid region estimation
+
+Camera distortion can become non-monotonic (fold), making parts of the image invalid. `estimate_valid_region` detects this using a two-stage check:
+
+1. **Solid-angle Jacobian**: `s = (∂ᵤr × ∂ᵥr) · r > 0` — is `unmap` locally orientation-preserving?
+2. **Round-trip Jacobian**: `det(d map(unmap(p)) / dp) ≈ 1` — does the projection round-trip to the same pixel?
+
+```python
+from colmap_cameras.utils.valid_region import estimate_valid_region
+
+valid_mask = estimate_valid_region(camera, step=2)  # (H, W) bool tensor
+```
+
+Interactive visualization with radial profile and slider:
+
+```bash
+python3 -m apps.valid_region --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0"
+```
+
+### Camera wrappers
+
+Two wrappers can be applied to any camera model:
+
+**`ValidatedCamera`** — filters out points outside the valid region using a precomputed spherical validity map. Both `map()` and `unmap()` return `(result, valid)` tuples.
+
+```python
+from colmap_cameras import ValidatedCamera
+
+cam = ValidatedCamera(inner_camera)
+pts2d, valid = cam.map(pts3d)     # valid=False outside valid region
+rays, valid = cam.unmap(pts2d)    # zero vectors outside, no NaN
+```
+
+**`CompositeCamera`** — replaces the inner model's `unmap()` past the valid boundary with a smooth atan continuation that asymptotes to 180°. Includes a differentiable monotonicity regularizer. Gradients flow through the continuation to the inner model's parameters.
+
+```python
+from colmap_cameras import CompositeCamera
+
+cam = CompositeCamera(inner_camera)
+cam.update_boundary()
+
+rays = cam.unmap(pixels)                         # smooth past the fold
+loss = reprojection + 0.1 * cam.monotonicity_loss()  # prevents folding during optimization
+```
+
 ## Useful stuff
 
 ### Apps

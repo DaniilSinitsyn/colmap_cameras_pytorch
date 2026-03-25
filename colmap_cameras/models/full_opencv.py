@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
 from ..utils.iterative_undistortion import IterativeUndistortion
 
-class FullOpenCV(BaseModel):
+class FullOpenCV(PerspectiveCamera):
     model_name = 'FULL_OPENCV'
     num_focal_params = 2
     num_pp_params = 2

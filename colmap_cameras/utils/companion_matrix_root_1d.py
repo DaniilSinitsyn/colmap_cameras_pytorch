@@ -1,5 +1,5 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Companion-matrix based polynomial solver with jacobians
 """

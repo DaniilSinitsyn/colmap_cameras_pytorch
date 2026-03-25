@@ -1,12 +1,12 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
 
-class DivisionModel(BaseModel):
+class DivisionModel(PerspectiveCamera):
     """
     DivisionModel
     map:

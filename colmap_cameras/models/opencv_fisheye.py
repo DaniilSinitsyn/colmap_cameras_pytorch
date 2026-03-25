@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
-from ..utils.newton_root_1d import NewtonRoot1D
 
-class OpenCVFisheye(BaseModel):
+
+class OpenCVFisheye(PerspectiveCamera):
     """
     Basically it is the same as simple_radial_fisheye.py
     """
@@ -56,7 +56,7 @@ class OpenCVFisheye(BaseModel):
         polynomials[:, 1] = 1
         polynomials[:, 0] = -r
 
-        theta = NewtonRoot1D.apply(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
+        theta = self.root_finder(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
         
         mask = (r > self.EPSILON) & (torch.tan(theta) > self.EPSILON)
         z = torch.ones_like(r)

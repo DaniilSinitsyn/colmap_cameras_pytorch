@@ -1,12 +1,12 @@
 """
-2025 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..spherical_camera import SphericalCamera
 import torch
 
-class Equirectangular(BaseModel):
+class Equirectangular(SphericalCamera):
     model_name = 'EQUIRECTANGULAR'
     num_focal_params = 2
     num_pp_params = 0
@@ -14,6 +14,10 @@ class Equirectangular(BaseModel):
 
     def __init__(self, x, image_shape):
         super().__init__(x, image_shape)
+
+    def get_fov(self):
+        import math
+        return torch.tensor([2 * math.pi, math.pi])
 
     @staticmethod
     def default_initialization(image_shape):

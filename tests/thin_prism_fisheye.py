@@ -1,5 +1,5 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """

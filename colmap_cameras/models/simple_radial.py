@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
-from ..utils.newton_root_1d import NewtonRoot1D
 
-class SimpleRadial(BaseModel):
+
+class SimpleRadial(PerspectiveCamera):
     """
     distortion works as follows:
     (u, v) -> (u, v) * (1 + k1 * r^2)
@@ -56,7 +56,7 @@ class SimpleRadial(BaseModel):
             polynomials[:, 1] = 1
             polynomials[:, 0] = -r
             
-            new_r = NewtonRoot1D.apply(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
+            new_r = self.root_finder(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
             r[mask] = new_r[mask] / r[mask]
 
         return torch.cat((uv * r[:, None], torch.ones_like(uv[:, :1])), dim=-1)

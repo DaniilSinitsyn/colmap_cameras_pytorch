@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
 
 
-class SimplePinhole(BaseModel):
+class SimplePinhole(PerspectiveCamera):
     model_name = 'SIMPLE_PINHOLE'
     num_focal_params = 1
     num_pp_params = 2

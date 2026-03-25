@@ -1,5 +1,5 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
@@ -21,6 +21,7 @@ from .unified_camera_model import TestUnifiedCameraModel
 from .meis_camera_model import TestMeisCameraModel
 from .meis_extended_camera_model import TestMeisExtendedCameraModel
 from .equirectangular import TestEquirectangular
+from .woodscape import TestWoodScape
 from .test_vs_pycolmap import TestVsPycolmap
 
 if __name__ == '__main__':

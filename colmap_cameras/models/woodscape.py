@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 import torch
-from ..utils.newton_root_1d import NewtonRoot1D
 
-class WoodScape(BaseModel):
+
+class WoodScape(PerspectiveCamera):
     model_name = 'WOODSCAPE'
     num_focal_params = 1
     num_pp_params = 2
@@ -25,11 +25,13 @@ class WoodScape(BaseModel):
 
         mask = chi > self.EPSILON
         uv[mask] = rho[mask, None] * points3d[:, :2][mask] / chi[mask, None]
-        
+        # At chi=0 (optical axis), rho=0 so uv=(0,0) is correct without division
+
         uv[:, 1] *= self[0]
         uv += self[1:3].reshape(1, 2) + self.image_shape.reshape(1, 2) / 2 - 0.5
-        
-        return uv, mask
+
+        valid = torch.ones_like(chi, dtype=torch.bool)
+        return uv, valid
     
     def get_center(self):
         return self[1:3].reshape(1, 2) + self.image_shape.reshape(1, 2) / 2 - 0.5
@@ -47,7 +49,8 @@ class WoodScape(BaseModel):
         polynomials[:, 1] = self[3]
         polynomials[:, 0] = -r
 
-        theta = NewtonRoot1D.apply(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
+        initial_guess = r / (self[3].detach().abs().clamp(min=1.0))
+        theta = self.root_finder(initial_guess, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
        
         mask = (r > self.EPSILON) & (torch.tan(theta) > self.EPSILON)
         z = torch.ones_like(r)

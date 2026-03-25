@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
-from ..utils.newton_root_1d import NewtonRoot1D
+from ..perspective_camera import PerspectiveCamera
+
 import torch
 
-class SimpleRadialFisheye(BaseModel):
+class SimpleRadialFisheye(PerspectiveCamera):
     """
     Distortion is a little bit differen as in colmap
     as it can be changed to exclude division by z,
@@ -65,7 +65,7 @@ class SimpleRadialFisheye(BaseModel):
         polynomials[:, 1] = 1
         polynomials[:, 0] = -r
         
-        theta = NewtonRoot1D.apply(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
+        theta = self.root_finder(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
         
         
         mask = (r > self.EPSILON) & (torch.tan(theta) > self.EPSILON)

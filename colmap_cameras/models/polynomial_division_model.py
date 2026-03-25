@@ -1,13 +1,13 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
-from ..base_model import BaseModel
+from ..perspective_camera import PerspectiveCamera
 from ..utils.companion_matrix_root_1d import CompanionMatrixRoot1D
 import torch
 
-class PolynomialDivisionModel(BaseModel):
+class PolynomialDivisionModel(PerspectiveCamera):
     """
     DivisionModel
     map:

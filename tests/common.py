@@ -1,5 +1,5 @@
 """
-2024 Daniil Sinitsyn
+2026 Daniil Sinitsyn
 
 Colmap camera models implemented in PyTorch
 """
@@ -7,117 +7,107 @@ import torch
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+
+def _make_grid_2d(w, h, step, device):
+    u = torch.arange(0, w, step, device=device)
+    v = torch.arange(0, h, step, device=device)
+    uu, vv = torch.meshgrid(u, v, indexing='ij')
+    return torch.stack([uu.ravel(), vv.ravel()], dim=-1).float()
+
+
+def _make_grid_3d(device):
+    u = torch.arange(-0.5, 0.5, 0.1, device=device)
+    v = torch.arange(-0.5, 0.5, 0.1, device=device)
+    uu, vv = torch.meshgrid(u, v, indexing='ij')
+    pts = torch.stack([uu.ravel(), vv.ravel(), torch.ones_like(uu.ravel())], dim=-1).float()
+    return pts / pts.norm(dim=-1, keepdim=True)
+
+
 def test_pt2d(model, test_self):
     model = model.to(DEVICE)
     mw, mh = (model.image_shape * 0.22).int()
-    u = torch.arange(mw, model.image_shape[0]-mw, 10, device=DEVICE)
-    v = torch.arange(mh, model.image_shape[1]-mh, 10, device=DEVICE)
+    u = torch.arange(mw, model.image_shape[0] - mw, 10, device=DEVICE)
+    v = torch.arange(mh, model.image_shape[1] - mh, 10, device=DEVICE)
     uu, vv = torch.meshgrid(u, v, indexing='ij')
     pts2d = torch.stack([uu.ravel(), vv.ravel()], dim=-1).float()
 
     pts3d = model.unmap(pts2d)
     pts2d_new, valid = model.map(pts3d)
-
     diff = (pts2d_new - pts2d).abs()
+
     test_self.assertTrue(valid.all())
     test_self.assertLess(diff[:, 0].max().item(), 1e-2)
     test_self.assertLess(diff[:, 1].max().item(), 1e-2)
 
+
 def test_pt3d(model, test_self):
     model = model.to(DEVICE)
-    u = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-    v = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-    uu, vv = torch.meshgrid(u, v, indexing='ij')
-    pts3d = torch.stack([uu.ravel(), vv.ravel(), torch.ones_like(uu.ravel())], dim=-1).float()
-    pts3d /= torch.norm(pts3d, dim=-1, keepdim=True)
+    pts3d = _make_grid_3d(DEVICE)
 
     pts2d, valid = model.map(pts3d)
     pts3d_new = model.unmap(pts2d)
-    pts3d_new /= torch.norm(pts3d_new, dim=-1, keepdim=True)
-
+    pts3d_new = pts3d_new / pts3d_new.norm(dim=-1, keepdim=True)
     diff = (pts3d_new - pts3d).abs()
+
     test_self.assertTrue(valid.all())
-    test_self.assertLess(diff[:, 0].max().item(), 1e-4)
-    test_self.assertLess(diff[:, 1].max().item(), 1e-4)
-    test_self.assertLess(diff[:, 2].max().item(), 1e-4)
+    for i in range(3):
+        test_self.assertLess(diff[:, i].max().item(), 1e-4)
+
 
 def test_model_fit(model1, model2, iters, test_self):
-    """Fit model2 to model1 using torch.optim (2D reprojection error)."""
-    model1 = model1.to(DEVICE)
-    model2 = model2.to(DEVICE)
-
-    u = torch.arange(0, model1.image_shape[0], 5, device=DEVICE)
-    v = torch.arange(0, model1.image_shape[1], 5, device=DEVICE)
-    uu, vv = torch.meshgrid(u, v, indexing='ij')
-    points2d = torch.stack([uu.ravel(), vv.ravel()], dim=-1).float()
+    model1, model2 = model1.to(DEVICE), model2.to(DEVICE)
+    w, h = int(model1.image_shape[0].item()), int(model1.image_shape[1].item())
+    pts2d = _make_grid_2d(w, h, 5, DEVICE)
 
     with torch.no_grad():
-        pts3d = model1.unmap(points2d)
+        pts3d = model1.unmap(pts2d)
 
     model2.requires_grad = True
-    n_iters = iters * 30
-    optimizer = torch.optim.Adam(model2.parameters(), lr=0.05)
-
-    for _ in range(n_iters):
-        optimizer.zero_grad()
-        pts2d_hat, valid = model2.map(pts3d)
-        if valid.sum() == 0: continue
-        loss = ((points2d[valid] - pts2d_hat[valid]) ** 2).mean()
-        loss.backward()
-        optimizer.step()
+    opt = torch.optim.Adam(model2.parameters(), lr=0.05)
+    for _ in range(iters * 30):
+        opt.zero_grad()
+        pred, valid = model2.map(pts3d)
+        if valid.sum() == 0:
+            continue
+        ((pts2d[valid] - pred[valid]) ** 2).mean().backward()
+        opt.step()
 
     with torch.no_grad():
-        u = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-        v = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-        uu, vv = torch.meshgrid(u, v, indexing='ij')
-        points3d = torch.stack([uu.ravel(), vv.ravel(), torch.ones_like(uu.ravel())], dim=-1).float()
-
-        pts2d_1, valid_1 = model1.map(points3d)
-        pts2d_2, valid_2 = model2.map(points3d)
-        valid = valid_1 & valid_2
-
-        diff = (pts2d_1[valid] - pts2d_2[valid]).abs()
-        if diff.numel() > 0:
+        pts3d_test = _make_grid_3d(DEVICE) * 3
+        p1, v1 = model1.map(pts3d_test)
+        p2, v2 = model2.map(pts3d_test)
+        valid = v1 & v2
+        if valid.any():
+            diff = (p1[valid] - p2[valid]).abs()
             test_self.assertLess(diff[:, 0].max().item(), 1)
             test_self.assertLess(diff[:, 1].max().item(), 1)
 
+
 def test_model_3dpts_fil(model1, model2, test_self):
-    """Fit model2 to model1 using torch.optim (3D ray error)."""
-    model1 = model1.to(DEVICE)
-    model2 = model2.to(DEVICE)
-
-    u = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-    v = torch.arange(-0.5, 0.5, 0.1, device=DEVICE)
-    uu, vv = torch.meshgrid(u, v, indexing='ij')
-    points3d = torch.stack([uu.ravel(), vv.ravel(), torch.ones_like(uu.ravel())], dim=-1).float()
-    points3d /= torch.norm(points3d, dim=-1, keepdim=True)
+    model1, model2 = model1.to(DEVICE), model2.to(DEVICE)
+    pts3d = _make_grid_3d(DEVICE)
 
     with torch.no_grad():
-        pts2d, valid = model1.map(points3d)
-        pts2d = pts2d[valid]
-        target_3d = points3d[valid]
+        pts2d, valid = model1.map(pts3d)
+        pts2d, target = pts2d[valid], pts3d[valid]
 
     with torch.no_grad():
-        pts3d_hat = model2.unmap(pts2d)
-        pts3d_hat = pts3d_hat / torch.norm(pts3d_hat, dim=-1, keepdim=True)
-        first_loss = ((pts3d_hat - target_3d) ** 2).mean()
+        pred = model2.unmap(pts2d)
+        first_loss = ((pred / pred.norm(dim=-1, keepdim=True) - target) ** 2).mean()
 
     model2.requires_grad = True
-    optimizer = torch.optim.Adam(model2.parameters(), lr=0.01)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
-
+    opt = torch.optim.Adam(model2.parameters(), lr=0.01)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=100)
     for _ in range(100):
-        optimizer.zero_grad()
-        pts3d_hat = model2.unmap(pts2d)
-        pts3d_hat = pts3d_hat / torch.norm(pts3d_hat, dim=-1, keepdim=True)
-        loss = ((pts3d_hat - target_3d) ** 2).mean()
+        opt.zero_grad()
+        pred = model2.unmap(pts2d)
+        loss = ((pred / pred.norm(dim=-1, keepdim=True) - target) ** 2).mean()
         loss.backward()
-        optimizer.step()
-        scheduler.step()
+        opt.step()
+        sched.step()
 
     with torch.no_grad():
-        pts3d_hat = model2.unmap(pts2d)
-        pts3d_hat = pts3d_hat / torch.norm(pts3d_hat, dim=-1, keepdim=True)
-        final_loss = ((pts3d_hat - target_3d) ** 2).mean()
+        pred = model2.unmap(pts2d)
+        final_loss = ((pred / pred.norm(dim=-1, keepdim=True) - target) ** 2).mean()
 
     test_self.assertLess(final_loss, first_loss)

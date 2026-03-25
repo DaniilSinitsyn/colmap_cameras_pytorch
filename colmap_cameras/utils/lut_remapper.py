@@ -8,13 +8,11 @@ import numpy as np
 
 
 class LutRemapper:
-    """Remap images using pre-computed look-up tables.
+    """Remap images using pre-computed LUTs.
 
     Usage::
-
-        remapper = LutRemapper('path/to/lut.npz')
+        remapper = LutRemapper('lut.npz')
         undistorted = remapper.remap('image.png')
-        undistorted = remapper.remap(cv2_image)
     """
 
     def __init__(self, path):
@@ -28,6 +26,5 @@ class LutRemapper:
             img = cv2.imread(img)
         h, w = img.shape[:2]
         if (w, h) != self.input_size:
-            raise ValueError(
-                f"Image size ({w}, {h}) does not match LUT input size {self.input_size}")
+            raise ValueError(f"Image size ({w}, {h}) != LUT input size {self.input_size}")
         return cv2.remap(img, self.xlut, self.ylut, interpolation)
