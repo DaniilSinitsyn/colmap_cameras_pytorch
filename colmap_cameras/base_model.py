@@ -12,15 +12,23 @@ class BaseCamera(torch.nn.Module):
     _image_shape: torch.Tensor
     _data: torch.nn.Parameter
     ROOT_FINDING_MAX_ITERATIONS = 20
-    ROOT_FINDING_METHOD = 'companion'  # 'newton' or 'companion'
+    ROOT_FINDING_METHOD = 'newton'  # 'newton' or 'companion'
     EPSILON = 1e-6
 
     def root_finder(self, initial_guess, polynomial, max_iter):
         """Polynomial root finder. Set ROOT_FINDING_METHOD to switch solver."""
         if self.ROOT_FINDING_METHOD == 'companion':
-            from .utils.companion_matrix_root_1d import CompanionMatrixRoot1D
-            roots, _ = CompanionMatrixRoot1D.apply(polynomial)
-            return roots
+            # Check conditioning: skip companion if coefficients are extreme
+            with torch.no_grad():
+                leading = polynomial[..., -1].abs()
+                max_coeff = polynomial.abs().max(dim=-1).values
+                well_conditioned = (leading > 1e-6) & (max_coeff / leading.clamp(min=1e-13) < 1e6)
+
+            if well_conditioned.all():
+                from .utils.companion_matrix_root_1d import CompanionMatrixRoot1D
+                roots, _ = CompanionMatrixRoot1D.apply(polynomial)
+                return roots
+
         from .utils.newton_root_1d import newton_root_1d
         return newton_root_1d(initial_guess, polynomial, max_iter)
 

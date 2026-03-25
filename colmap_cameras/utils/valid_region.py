@@ -3,31 +3,40 @@
 
 Estimate the valid image region of a camera model.
 
-Checks the round-trip Jacobian det(d map(unmap(p)) / dp) ≈ 1,
-then flood-fills from the principal point.
+Checks the round-trip Jacobian det(d map(unmap(p)) / dp) ≈ 1
+via finite differences, then flood-fills from the principal point.
 """
 import torch
 
 
-def roundtrip_jacobian_det(camera, pts2d):
-    """Compute det(d map(unmap(p)) / dp).
-    pts2d must have requires_grad=True.
-    Returns (det, valid)."""
-    rays = camera.unmap(pts2d)
-    ok = ~torch.isnan(rays).any(dim=-1)
-    pts2d_out, vm = camera.map(rays)
-    ok = ok & vm
+def roundtrip_jacobian_det(camera, pts2d, eps=0.5):
+    """Compute det(d map(unmap(p)) / dp) via finite differences.
+    No autograd needed. Returns (det, valid)."""
+    du = torch.tensor([eps, 0], device=pts2d.device)
+    dv = torch.tensor([0, eps], device=pts2d.device)
 
-    det = torch.zeros(len(pts2d), device=pts2d.device)
-    if ok.any():
-        g0 = torch.autograd.grad(pts2d_out[:, 0].sum(), pts2d, retain_graph=True)[0]
-        g1 = torch.autograd.grad(pts2d_out[:, 1].sum(), pts2d)[0]
-        det = g0[:, 0] * g1[:, 1] - g0[:, 1] * g1[:, 0]
+    rays = camera.unmap(pts2d)
+    g, v0 = camera.map(rays)
+
+    rays_du = camera.unmap(pts2d + du)
+    g_du, v1 = camera.map(rays_du)
+
+    rays_dv = camera.unmap(pts2d + dv)
+    g_dv, v2 = camera.map(rays_dv)
+
+    ok = (~torch.isnan(rays).any(dim=-1) & v0
+          & ~torch.isnan(rays_du).any(dim=-1) & v1
+          & ~torch.isnan(rays_dv).any(dim=-1) & v2)
+
+    dg_du = (g_du - g) / eps
+    dg_dv = (g_dv - g) / eps
+    det = dg_du[:, 0] * dg_dv[:, 1] - dg_du[:, 1] * dg_dv[:, 0]
     return det, ok
 
 
-def estimate_valid_region(camera, step=1.0, chunk_size=10000, rt_tolerance=0.5):
+def estimate_valid_region(camera, step=1.0, chunk_size=50000, rt_tolerance=0.5):
     """Estimate valid region via round-trip Jacobian, flood-filled from center.
+    Uses finite differences — no autograd, works with torch.no_grad().
     Returns (H, W) bool tensor."""
     device = camera.device
     w, h = [int(x.item()) for x in camera.image_shape]
@@ -39,10 +48,11 @@ def estimate_valid_region(camera, step=1.0, chunk_size=10000, rt_tolerance=0.5):
     n = pts2d.shape[0]
     valid_all = torch.zeros(n, dtype=torch.bool, device=device)
 
-    for i in range(0, n, chunk_size):
-        chunk = pts2d[i:i + chunk_size].detach().requires_grad_(True)
-        det, ok = roundtrip_jacobian_det(camera, chunk)
-        valid_all[i:i + len(chunk)] = ok & ((det - 1.0).abs() < rt_tolerance)
+    with torch.no_grad():
+        for i in range(0, n, chunk_size):
+            chunk = pts2d[i:i + chunk_size]
+            det, ok = roundtrip_jacobian_det(camera, chunk)
+            valid_all[i:i + len(chunk)] = ok & ((det - 1.0).abs() < rt_tolerance)
 
     ws, hs = len(u), len(v)
     grid = valid_all.reshape(ws, hs).T

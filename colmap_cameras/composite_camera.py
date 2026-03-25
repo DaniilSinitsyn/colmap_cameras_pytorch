@@ -122,26 +122,45 @@ class CompositeCamera(CameraAdapter):
 
         return rays
 
-    def monotonicity_loss(self, n_samples=1000, eps=1e-6):
-        """-log(det(J)) regularizer. Zero in valid regions, grows near folds."""
+    def monotonicity_loss(self, n_samples=256, eps=1e-6):
+        """Penalizes dtheta/dr approaching zero near the boundary.
+
+        Samples radial cuts near the boundary and computes how fast the
+        ray angle changes with pixel radius. When this slope approaches
+        zero, the distortion is close to folding. Differentiable through
+        inner camera parameters via autograd.
+        """
         device = self.inner.device
-        w, h = [int(x.item()) for x in self.inner.image_shape]
+        center = self.inner.get_center()
+        if center.numel() < 2:
+            w, h = [int(x.item()) for x in self.inner.image_shape]
+            center = torch.tensor([w / 2.0, h / 2.0], device=device)
 
-        pts2d = torch.stack([torch.rand(n_samples, device=device) * w,
-                             torch.rand(n_samples, device=device) * h], dim=-1).requires_grad_(True)
+        # Sample near the boundary: radius in [0.5*r_b, 0.95*r_b]
+        az = torch.rand(n_samples, device=device) * 2 * math.pi - math.pi
+        r_b = self._interp_r_boundary(az)
+        r = r_b * (0.5 + 0.45 * torch.rand(n_samples, device=device))
 
-        pts3d = self.inner.unmap(pts2d)
-        ok = ~torch.isnan(pts3d).any(dim=-1)
-        pts2d_out, vm = self.inner.map(pts3d)
-        ok = ok & vm
+        # Compute theta(r) and theta(r - dr) to get slope
+        dr = 1.0
+        d = torch.stack([torch.cos(az), torch.sin(az)], dim=-1)
+        pts_a = center + r.unsqueeze(-1) * d
+        pts_b = center + (r - dr).unsqueeze(-1) * d
 
+        rays_a = self.inner.unmap(pts_a)
+        rays_b = self.inner.unmap(pts_b)
+
+        ok = ~torch.isnan(rays_a).any(dim=-1) & ~torch.isnan(rays_b).any(dim=-1)
         if not ok.any():
             return torch.tensor(0.0, device=device)
 
-        g0 = torch.autograd.grad(pts2d_out[:, 0].sum(), pts2d, retain_graph=True)[0]
-        g1 = torch.autograd.grad(pts2d_out[:, 1].sum(), pts2d)[0]
-        det = g0[:, 0] * g1[:, 1] - g0[:, 1] * g1[:, 0]
-        return (-torch.log(det[ok].clamp(min=eps))).mean()
+        theta_a = torch.acos((rays_a / rays_a.norm(dim=-1, keepdim=True).clamp(min=1e-8))[:, 2].clamp(-1, 1))
+        theta_b = torch.acos((rays_b / rays_b.norm(dim=-1, keepdim=True).clamp(min=1e-8))[:, 2].clamp(-1, 1))
+        slope = (theta_a - theta_b) / dr  # dtheta/dr in radians/pixel
+
+        # Penalize small positive slopes (approaching fold)
+        slope_valid = slope[ok]
+        return (-torch.log(slope_valid.clamp(min=eps))).mean()
 
     @property
     def model_name(self):

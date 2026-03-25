@@ -76,8 +76,10 @@ Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 
 [All camera models are supported](colmap_cameras/models):
 
-| Colmap's name         | PyTorch class        |
-| :-------------------: | :------------------:  |
+**COLMAP models:**
+
+| Name                  | Class                |
+| :-------------------: | :------------------: |
 | SIMPLE_PINHOLE        | `SimplePinhole`      |
 | PINHOLE               | `Pinhole`            |
 | SIMPLE_RADIAL         | `SimpleRadial`       |
@@ -89,6 +91,17 @@ Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 | RADIAL_FISHEYE        | `RadialFisheye`      |
 | FOV                   | `Fov`                |
 | THIN_PRISM_FISHEYE    | `ThinPrismFisheye`   |
+
+**Additional models:**
+
+| Name                     | Class                     | Description                          |
+| :----------------------: | :-----------------------: | :----------------------------------: |
+| EQUIRECTANGULAR          | `Equirectangular`         | Spherical panoramic projection       |
+| UNIFIED_CAMERA_MODEL     | `UnifiedCameraModel`      | Geyer-Barreto unified model (UCM)    |
+| MEIS_CAMERA_MODEL        | `MeisCameraModel`         | Enhanced unified model (Mei)         |
+| DIVISION_MODEL           | `DivisionModel`           | Single-parameter division undistortion|
+| POLYNOMIAL_DIVISION_MODEL| `PolynomialDivisionModel` | Multi-parameter division model       |
+| WOODSCAPE               | `WoodScape`                | Valeo WoodScape fisheye model        |
 
 To use a specific camera model you can import it directly from the `colmap_cameras.models` module.
 
@@ -103,10 +116,15 @@ model = Pinhole(params, image_shape)
 
 ### Valid region estimation
 
-Camera distortion can become non-monotonic (fold), making parts of the image invalid. `estimate_valid_region` detects this using a two-stage check:
+Camera distortion can become non-monotonic — the mapping $\text{pixel} \to \text{ray}$ develops a fold where nearby pixels map to wildly different ray directions. We detect this by checking the **round-trip Jacobian**.
 
-1. **Solid-angle Jacobian**: `s = (∂ᵤr × ∂ᵥr) · r > 0` — is `unmap` locally orientation-preserving?
-2. **Round-trip Jacobian**: `det(d map(unmap(p)) / dp) ≈ 1` — does the projection round-trip to the same pixel?
+For a pixel $\mathbf{p}$, consider the composition $g(\mathbf{p}) = \text{map}(\text{unmap}(\mathbf{p}))$. In the valid region this is the identity, so $J_g = I$ and $\det(J_g) = 1$. At a fold, Newton's root finder inside `unmap` converges to a wrong root, so $g(\mathbf{p}) \neq \mathbf{p}$ and $\det(J_g)$ deviates from 1. The criterion is:
+
+$$\left|\det\!\left(\frac{\partial\, \text{map}(\text{unmap}(\mathbf{p}))}{\partial \mathbf{p}}\right) - 1\right| < \varepsilon$$
+
+We compute $\det(J_g)$ via two backward passes through the full $\text{map}(\text{unmap}(\mathbf{p}))$ chain, then flood-fill from the principal point to get the largest connected valid component.
+
+This requires differentiating through Newton's iterations (not the implicit function theorem), because the IFT backward hides root-switching discontinuities.
 
 ```python
 from colmap_cameras.utils.valid_region import estimate_valid_region
@@ -122,19 +140,33 @@ python3 -m apps.valid_region --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -
 
 ### Camera wrappers
 
-Two wrappers can be applied to any camera model:
+Two wrappers can be applied to any camera model. Both inherit from `CameraAdapter` which delegates all common methods (`map`, `get_center`, `fix`, `to_colmap`, etc.) to the inner model.
 
-**`ValidatedCamera`** — filters out points outside the valid region using a precomputed spherical validity map. Both `map()` and `unmap()` return `(result, valid)` tuples.
+**`ValidatedCamera`** — filters out points outside the valid region. Precomputes a lookup table in spherical coordinates `(theta, phi)` so validity checks are O(1) per ray. Both `map()` and `unmap()` return `(result, valid)` tuples with zero vectors for invalid points (no NaN).
 
 ```python
 from colmap_cameras import ValidatedCamera
 
 cam = ValidatedCamera(inner_camera)
-pts2d, valid = cam.map(pts3d)     # valid=False outside valid region
+pts2d, valid = cam.map(pts3d)     # valid=False if ray direction is outside valid region
 rays, valid = cam.unmap(pts2d)    # zero vectors outside, no NaN
 ```
 
-**`CompositeCamera`** — replaces the inner model's `unmap()` past the valid boundary with a smooth atan continuation that asymptotes to 180°. Includes a differentiable monotonicity regularizer. Gradients flow through the continuation to the inner model's parameters.
+**`CompositeCamera`** — extends any camera model to cover the full sphere by replacing the inner model's `unmap()` past the valid boundary with a smooth analytical continuation.
+
+The continuation uses a shifted arctangent:
+
+$$\theta(r) = \theta_b + k \cdot \arctan\!\left(\frac{(r - r_b) \cdot s_b}{k}\right), \quad k = \frac{\pi - \theta_b}{\pi/2}$$
+
+where $r$ is pixel radius from the center, $r_b$ is the boundary radius (from the valid region mask), and $\theta_b$, $s_b = d\theta/dr$ are the ray angle and slope at the boundary, computed **live** from the inner model's `unmap()` so that gradients flow through to the camera parameters.
+
+This gives:
+- **C0 continuity**: $\theta(r_b) = \theta_b$
+- **C1 continuity**: $\theta'(r_b) = s_b$
+- **Monotonicity**: $\theta'(r) > 0$ for all $r > r_b$
+- **Boundedness**: $\theta(r) \to \pi$ as $r \to \infty$
+
+Includes a differentiable monotonicity regularizer that penalizes $d\theta/dr$ approaching zero near the boundary — this provides gradient signal *before* a fold happens, unlike the round-trip Jacobian which only detects folds after the fact.
 
 ```python
 from colmap_cameras import CompositeCamera
@@ -142,8 +174,8 @@ from colmap_cameras import CompositeCamera
 cam = CompositeCamera(inner_camera)
 cam.update_boundary()
 
-rays = cam.unmap(pixels)                         # smooth past the fold
-loss = reprojection + 0.1 * cam.monotonicity_loss()  # prevents folding during optimization
+rays = cam.unmap(pixels)                              # smooth past the fold
+loss = reprojection + 0.1 * cam.monotonicity_loss()   # prevents folding during optimization
 ```
 
 ## Useful stuff
@@ -169,9 +201,15 @@ img = remapper.remap_from_fov(model_in, fov_out, img_path) # fov in degrees
 
 ### Root solvers
 
-Some camera models require solving polynomial roots. [For high-order polynomials, the only way to do this is to use a numerical solver.](https://en.wikipedia.org/wiki/Abel–Ruffini_theorem)
+Camera models with polynomial distortion require inverting the distortion function. Set `ROOT_FINDING_METHOD` to choose the solver:
 
-This repo contains an extention of `torch.autograd.Function` for [Newton's method](colmap_cameras/utils/newton_root_1d.py) and [Companion matrix root solver](colmap_cameras/utils/companion_matrix_root_1d.py).
+```python
+from colmap_cameras.base_model import BaseCamera
+BaseCamera.ROOT_FINDING_METHOD = 'newton'     # default, autograd through iterations
+BaseCamera.ROOT_FINDING_METHOD = 'companion'  # eigenvalue solver (auto-falls back to Newton if ill-conditioned)
+```
+
+Newton's method differentiates through the iterations directly (not via the implicit function theorem), which correctly exposes fold singularities in the gradient.
 
 
 ## Tests
@@ -203,25 +241,3 @@ img = remapper.remap('input.png')  # validates input image size
 ```
 
 `--output_size` accepts one number (square) or two (width height).
-
-### Valid region estimation
-
-Estimate and visualize where the camera distortion is locally injective (Jacobian determinant > 0):
-
-```bash
-python3 -m apps.valid_region \
-  --input_camera "OPENCV_FISHEYE 640 480 300 300 320 240 0.1 -0.05 0.01 -0.005" \
-  --img_path input.png --output valid_region.png
-```
-
-Programmatic usage:
-
-```python
-from colmap_cameras.utils.valid_region import estimate_valid_region
-valid_mask = estimate_valid_region(camera)  # (H, W) bool tensor
-```
-
-## TODO
-- [x] Add remap app, that generates remaps alongside with a class to run them.
-- [x] Estimate image area where camera is valid for each model. (Basically to check whether distortion is monotonic)
-- [x] Visualisation util for the previous point.
