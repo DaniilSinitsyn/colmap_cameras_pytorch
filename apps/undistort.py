@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from colmap_cameras import model_selector
+from colmap_cameras.resized_camera import ResizedCamera
 from colmap_cameras.models import SimplePinhole
 from colmap_cameras.utils.remapper import Remapper
 
@@ -25,12 +26,16 @@ arg_parser.add_argument("--img_path", type=str, default=None, help="Path to inpu
 arg_parser.add_argument("--save_lut", type=str, default=None,
                         help="Directory to save LUT (lut.npz + lut_remapper.py)")
 arg_parser.add_argument("--output", type=str, default=None, help="Path to save undistorted image")
+arg_parser.add_argument("--resize_ratio", type=float, default=None, help="Resize input camera by this factor (e.g. 0.5 for half resolution)")
 
 args = arg_parser.parse_args()
 
 camera_name = args.input_camera.split()[0]
 camera_data = list(map(float, args.input_camera.split()[1:]))
 input_camera = model_selector(camera_name, camera_data)
+
+if args.resize_ratio is not None:
+    input_camera = ResizedCamera(input_camera, args.resize_ratio)
 
 # Build output pinhole camera
 if args.output_size is not None:
