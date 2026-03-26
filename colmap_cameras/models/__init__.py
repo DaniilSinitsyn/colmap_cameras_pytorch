@@ -13,5 +13,6 @@ from .division_model import DivisionModel
 from .polynomial_division_model import PolynomialDivisionModel
 from .unified_camera_model import UnifiedCameraModel
 from .meis_camera_model import MeisCameraModel
+from .meis_extended_camera_model import MeisExtendedCameraModel
 from .woodscape import WoodScape
 from .equirectangular import Equirectangular

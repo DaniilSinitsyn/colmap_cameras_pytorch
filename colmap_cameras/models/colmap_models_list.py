@@ -21,6 +21,7 @@ colmap_models = [
     PolynomialDivisionModel,
     UnifiedCameraModel,
     MeisCameraModel,
+    MeisExtendedCameraModel,
     WoodScape,
     Equirectangular
 ]
