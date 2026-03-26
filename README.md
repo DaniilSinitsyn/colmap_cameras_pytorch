@@ -99,6 +99,7 @@ Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 | EQUIRECTANGULAR          | `Equirectangular`         | Spherical panoramic projection       |
 | UNIFIED_CAMERA_MODEL     | `UnifiedCameraModel`      | Geyer-Barreto unified model (UCM)    |
 | MEIS_CAMERA_MODEL        | `MeisCameraModel`         | Enhanced unified model (Mei)         |
+| MEIS_EXTENDED_CAMERA_MODEL| `MeisExtendedCameraModel`| Mei model with k3 radial distortion  |
 | DIVISION_MODEL           | `DivisionModel`           | Single-parameter division undistortion|
 | POLYNOMIAL_DIVISION_MODEL| `PolynomialDivisionModel` | Multi-parameter division model       |
 | WOODSCAPE               | `WoodScape`                | Valeo WoodScape fisheye model        |
