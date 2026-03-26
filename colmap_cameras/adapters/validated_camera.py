@@ -7,7 +7,7 @@ import math
 import torch
 
 from .camera_adapter import CameraAdapter
-from .utils.valid_region import estimate_valid_region
+from ..utils.valid_region import estimate_valid_region
 
 
 class ValidatedCamera(CameraAdapter):

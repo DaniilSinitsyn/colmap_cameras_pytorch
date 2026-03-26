@@ -23,6 +23,7 @@ from .meis_extended_camera_model import TestMeisExtendedCameraModel
 from .equirectangular import TestEquirectangular
 from .woodscape import TestWoodScape
 from .test_vs_pycolmap import TestVsPycolmap
+from .adapters import TestResizedCamera, TestValidatedCamera, TestCompositeCamera, TestAdapterComposition
 
 if __name__ == '__main__':
     unittest.main()

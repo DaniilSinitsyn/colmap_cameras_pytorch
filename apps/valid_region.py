@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
 from colmap_cameras import model_selector_from_str
-from colmap_cameras.composite_camera import CompositeCamera
+from colmap_cameras import CompositeCamera
 from colmap_cameras.utils.valid_region import estimate_valid_region
 
 

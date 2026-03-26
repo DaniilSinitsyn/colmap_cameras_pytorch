@@ -45,7 +45,7 @@ class CompositeCamera(CameraAdapter):
 
     def update_boundary(self, step=2.0):
         """Recompute boundary radii from the valid region mask."""
-        from .utils.valid_region import estimate_valid_region
+        from ..utils.valid_region import estimate_valid_region
 
         mask = estimate_valid_region(self.inner, step=step)
         mask_np = mask.cpu().numpy()

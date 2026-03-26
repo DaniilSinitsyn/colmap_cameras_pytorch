@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from colmap_cameras import model_selector
-from colmap_cameras.resized_camera import ResizedCamera
+from colmap_cameras import ResizedCamera
 from colmap_cameras.models import SimplePinhole
 from colmap_cameras.utils.remapper import Remapper
 

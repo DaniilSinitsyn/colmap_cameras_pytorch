@@ -141,7 +141,7 @@ python3 -m apps.valid_region --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -
 
 ### Camera wrappers
 
-Two wrappers can be applied to any camera model. Both inherit from `CameraAdapter` which delegates all common methods (`map`, `get_center`, `fix`, `to_colmap`, etc.) to the inner model.
+Camera wrappers live in `colmap_cameras.adapters` and inherit from `CameraAdapter`, which delegates all common methods to the inner model. They compose freely in any order.
 
 **`ValidatedCamera`** — filters out points outside the valid region. Precomputes a lookup table in spherical coordinates `(theta, phi)` so validity checks are O(1) per ray. Both `map()` and `unmap()` return `(result, valid)` tuples with zero vectors for invalid points (no NaN).
 
@@ -177,6 +177,23 @@ cam.update_boundary()
 
 rays = cam.unmap(pixels)                              # smooth past the fold
 loss = reprojection + 0.1 * cam.monotonicity_loss()   # prevents folding during optimization
+```
+
+**`ResizedCamera`** — scales pixel coordinates by a factor. Useful for working at reduced resolution.
+
+```python
+from colmap_cameras import ResizedCamera
+
+half = ResizedCamera(inner_camera, scale=0.5)   # half resolution
+double = ResizedCamera(inner_camera, scale=2.0) # double resolution
+```
+
+Wrappers compose:
+
+```python
+cam = ResizedCamera(ValidatedCamera(inner), scale=0.5)
+# or
+cam = ValidatedCamera(ResizedCamera(inner, 0.5))
 ```
 
 ## Useful stuff
