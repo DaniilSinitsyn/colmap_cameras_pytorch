@@ -13,6 +13,7 @@ class BaseCamera(torch.nn.Module):
     _data: torch.nn.Parameter
     ROOT_FINDING_MAX_ITERATIONS = 20
     ROOT_FINDING_METHOD = 'newton'  # 'newton' or 'companion'
+    CLOSED_FORM_MAP = True  # False only for PolynomialDivisionModel
     EPSILON = 1e-6
 
     def root_finder(self, initial_guess, polynomial, max_iter):
@@ -102,6 +103,44 @@ class BaseCamera(torch.nn.Module):
 
     def get_fov(self):
         raise NotImplementedError
+
+    # ----- Jacobians ----------------------------------------------------------
+
+    def map_with_jac(self, points3d, rel_eps=1e-4):
+        """map() + Jacobian d(pts2d)/d(params) via finite differences.
+        Returns (pts2d, valid, J) where J is (N, 2, num_params).
+        Subclasses should override with analytical Jacobians."""
+        with torch.no_grad():
+            pts2d, valid = self.map(points3d)
+            P = self._data.shape[0]
+            J = torch.zeros(points3d.shape[0], 2, P, device=self.device)
+            for i in range(P):
+                eps = max(abs(self._data[i].item()) * rel_eps, rel_eps)
+                self._data[i] += eps
+                pts2d_plus, _ = self.map(points3d)
+                self._data[i] -= 2 * eps
+                pts2d_minus, _ = self.map(points3d)
+                self._data[i] += eps
+                J[:, :, i] = (pts2d_plus - pts2d_minus) / (2 * eps)
+        return pts2d, valid, J
+
+    def unmap_with_jac(self, points2d, rel_eps=1e-4):
+        """unmap() + Jacobian d(pts3d)/d(params) via finite differences.
+        Returns (pts3d, J) where J is (N, 3, num_params).
+        Subclasses should override with analytical Jacobians."""
+        with torch.no_grad():
+            pts3d = self.unmap(points2d)
+            P = self._data.shape[0]
+            J = torch.zeros(points2d.shape[0], 3, P, device=self.device)
+            for i in range(P):
+                eps = max(abs(self._data[i].item()) * rel_eps, rel_eps)
+                self._data[i] += eps
+                pts3d_plus = self.unmap(points2d)
+                self._data[i] -= 2 * eps
+                pts3d_minus = self.unmap(points2d)
+                self._data[i] += eps
+                J[:, :, i] = (pts3d_plus - pts3d_minus) / (2 * eps)
+        return pts3d, J
 
     # ----- Tensor-like --------------------------------------------------------
 

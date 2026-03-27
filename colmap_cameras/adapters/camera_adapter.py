@@ -38,3 +38,10 @@ class CameraAdapter(torch.nn.Module):
     def model_name(self):          return self.inner.model_name
 
     def __repr__(self):            return repr(self.inner)
+
+    def __getattr__(self, name):
+        """Delegate any missing attribute to inner model."""
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.inner, name)

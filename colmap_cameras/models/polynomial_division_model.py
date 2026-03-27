@@ -15,6 +15,7 @@ class PolynomialDivisionModel(PerspectiveCamera):
     (u, v, f * (1 + p(||u, v||)))
     """
     model_name = "POLYNOMIAL_DIVISION_MODEL"
+    CLOSED_FORM_MAP = False
     num_focal_params = 1
     num_pp_params = 2
     num_extra_params = -1

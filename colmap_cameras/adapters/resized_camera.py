@@ -13,6 +13,9 @@ class ResizedCamera(CameraAdapter):
 
         cam = ResizedCamera(inner, scale=0.5)   # half resolution
         cam = ResizedCamera(inner, scale=2.0)    # double resolution
+
+    Use inner.rescale(scale) instead if you need a standalone camera
+    with modified parameters (e.g. for to_colmap() export).
     """
 
     def __init__(self, inner, scale):
@@ -32,6 +35,13 @@ class ResizedCamera(CameraAdapter):
 
     def get_center(self):
         return self.inner.get_center() * self._scale
+
+    def get_center_resolution_focal(self):
+        return self.inner.get_center_resolution_focal() * self._scale
+
+    def to_colmap(self):
+        """Export as a standalone camera with rescaled params."""
+        return self.inner.rescale(self._scale).to_colmap()
 
     @property
     def model_name(self):

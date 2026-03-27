@@ -33,6 +33,36 @@ class UnifiedCameraModel(PerspectiveCamera):
 
         return uv * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2), valid
 
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        """Estimate alpha from 2D-3D correspondences."""
+        with torch.no_grad():
+            fx, fy = self[0], self[1]
+            cx, cy = self[2], self[3]
+
+            # Normalize to unit rays
+            pts3d_n = pts3d / pts3d.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+
+            # Pixel coords -> normalized image coords
+            uv_pixel = torch.stack([(pts2d[:, 0] - cx) / fx,
+                                    (pts2d[:, 1] - cy) / fy], dim=-1)
+            r_pixel = uv_pixel.norm(dim=-1)
+
+            # uv = xy / (z + alpha * d), with d=1 for unit rays
+            # With no distortion: r_pixel = ||xy|| / (z + alpha)
+            # => alpha = ||xy|| / r_pixel - z
+            xy_norm = torch.sqrt(pts3d_n[:, 0] ** 2 + pts3d_n[:, 1] ** 2).clamp(min=1e-8)
+            mask = r_pixel > 1e-6
+            if mask.sum() < 3:
+                return
+
+            alpha_est = xy_norm[mask] / r_pixel[mask] - pts3d_n[mask, 2]
+            alpha = alpha_est.median().item()
+            alpha = max(alpha, 0.0)
+            self[4] = alpha
+
+    def get_center_resolution_focal(self):
+        return self._estimate_center_resolution_focal()
+
     def unmap(self, points2d):
         uv = (points2d - self[2:4].reshape(1, 2)) / self[:2].reshape(1, 2)
 

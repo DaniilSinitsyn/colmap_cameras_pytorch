@@ -5,7 +5,7 @@ Tests for camera adapters: ResizedCamera, ValidatedCamera, CompositeCamera.
 """
 import unittest
 import torch
-from colmap_cameras import model_selector_from_str, ResizedCamera, ValidatedCamera, CompositeCamera
+from colmap_cameras import model_selector_from_str, ResizedCamera, ValidatedCamera, CompositeCamera, LUTCamera
 
 
 def make_camera():
@@ -175,6 +175,55 @@ class TestAdapterComposition(unittest.TestCase):
         comp = CompositeCamera(inner)
         comp.update_boundary()
         cam = ResizedCamera(comp, 0.5)
+        rays = cam.unmap(torch.tensor([[50., 50.]]))
+        self.assertFalse(torch.isnan(rays).any())
+
+
+class TestLUTCamera(unittest.TestCase):
+
+    def test_unmap_accuracy(self):
+        inner = make_camera()
+        lut = LUTCamera(inner, pixel_step=1, angle_step=1.0)
+        pts2d = torch.tensor([[100., 100.], [120., 110.], [80., 90.]])
+        rays_inner = inner.unmap(pts2d)
+        rays_lut = lut.unmap(pts2d)
+        self.assertLess((rays_inner - rays_lut).abs().max().item(), 0.01)
+
+    def test_map_accuracy(self):
+        inner = make_camera()
+        lut = LUTCamera(inner, pixel_step=1, angle_step=0.5)
+        pts3d = torch.tensor([[0.1, 0.05, 1.0], [0.0, 0.0, 1.0], [-0.1, 0.1, 1.0]])
+        p_inner, v_inner = inner.map(pts3d)
+        p_lut, v_lut = lut.map(pts3d)
+        v = v_inner & v_lut
+        self.assertLess((p_inner[v] - p_lut[v]).abs().max().item(), 1.0)
+
+    def test_unmap_no_nan(self):
+        inner = make_camera()
+        lut = LUTCamera(inner)
+        pts2d = torch.rand(100, 2) * torch.tensor([200., 200.])
+        rays = lut.unmap(pts2d)
+        self.assertFalse(torch.isnan(rays).any())
+
+    def test_map_valid(self):
+        inner = make_camera()
+        lut = LUTCamera(inner, angle_step=1.0)
+        pts3d = torch.tensor([[0.0, 0.0, 1.0], [0.1, 0.0, 1.0]])
+        pts2d, valid = lut.map(pts3d)
+        self.assertTrue(valid.all())
+
+    def test_roundtrip(self):
+        inner = make_camera()
+        lut = LUTCamera(inner, pixel_step=1, angle_step=0.5)
+        pts2d = torch.tensor([[100., 100.], [110., 105.]])
+        rays = lut.unmap(pts2d)
+        pts2d_back, valid = lut.map(rays)
+        self.assertTrue(valid.all())
+        self.assertLess((pts2d_back - pts2d).abs().max().item(), 2.0)
+
+    def test_compose_with_resize(self):
+        inner = make_camera()
+        cam = ResizedCamera(LUTCamera(inner), 0.5)
         rays = cam.unmap(torch.tensor([[50., 50.]]))
         self.assertFalse(torch.isnan(rays).any())
 

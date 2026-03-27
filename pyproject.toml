@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "colmap_cameras"
-version = "0.1.0"
+version = "1.0.0"
 
 [tool.setuptools]
-packages = ["colmap_cameras", "colmap_cameras.models", "colmap_cameras.utils"]
+packages = ["colmap_cameras", "colmap_cameras.models", "colmap_cameras.utils", "colmap_cameras.adapters", "colmap_cameras.apps"]

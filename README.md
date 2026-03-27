@@ -1,49 +1,55 @@
 # :globe_with_meridians: Colmap Cameras in PyTorch
 
-This repository contains PyTorch implementations of the camera models used in the [COLMAP](https://colmap.github.io/) structure-from-motion pipeline.
+PyTorch implementations of camera models from [COLMAP](https://colmap.github.io/) and beyond.
 
 Camera models are `torch.nn.Module` subclasses with full **automatic differentiation** for `map` (project) and `unmap` (backproject) operations.
 
-> This code was mainly developed for my own research purposes.
+## Table of Contents
+
+- [Installation](#installation)
+- [Basic Usage](#basic-usage)
+- [Camera Models](#camera-models)
+- [Camera Wrappers](#camera-wrappers)
+- [Valid Region Estimation](#valid-region-estimation)
+- [Apps](#apps)
+- [Root Solvers](#root-solvers)
+- [Analytical Jacobians](#analytical-jacobians)
+- [Tests](#tests)
 
 ## Installation
 
-Just `git clone` this repository to your project folder.
+```bash
+pip install git+https://github.com/DaniilSinitsyn/colmap_cameras_pytorch.git
+```
+
+Or clone directly:
 
 ```bash
 git clone https://github.com/DaniilSinitsyn/colmap_cameras_pytorch.git
 ```
 
-## Usage
+## Basic Usage
 
 ### Load camera from cameras.txt
 
 ```python
 import torch
-from colmap_cameras_pytorch.colmap_cameras import model_selector, model_selector_from_str
+from colmap_cameras import model_selector, model_selector_from_str
 
-# Model defined as a string in colmap cameras.txt
-camera_txt = "SIMPLE_RADIAL 100 100 100 50 50 0.3"
+# From a colmap string
+model = model_selector_from_str("SIMPLE_RADIAL 100 100 100 50 50 0.3")
 
-# Create model based on the colmap string
-model = model_selector_from_str(camera_txt)
+# Or from name + parameters
+model = model_selector("SIMPLE_RADIAL", [100, 100, 100, 50, 50, 0.3])
 
-# Manually create model from parameters and model name
-camera_model = camera_txt.split()[0]
-camera_params = torch.tensor([float(x) for x in camera_txt.split()[1:]])
+# Project 3D points to pixels
+pts2d, valid = model.map(pts3d)
 
-model = model_selector(camera_model, camera_params)
-
-# project 3d points onto image
-pts3d = torch.rand(10, 3)
-points_2d, valid = model.map(points3d)
-# unproject 2d points to the ray
-points_3d = model.unmap(points_2d)
+# Backproject pixels to rays
+rays = model.unmap(pts2d)
 ```
 
 ### Optimizing camera parameters
-
-Camera models are `torch.nn.Module` subclasses. Enable gradients and use any PyTorch optimizer:
 
 ```python
 model.requires_grad = True
@@ -51,8 +57,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
 for _ in range(iterations):
     optimizer.zero_grad()
-    ...
-    loss = ...
+    pts2d, valid = model.map(pts3d)
+    loss = ((pts2d[valid] - target[valid]) ** 2).mean()
     loss.backward()
     optimizer.step()
 ```
@@ -65,16 +71,19 @@ By default the principal point (center) is fixed. Use `fix()` / `unfix()` to con
 model.unfix('center')           # unfix principal point
 model.fix('focal')              # fix focal length
 model.fix(4, 5)                 # fix individual params by index
-
 print(model.fixed)              # {'focal': True, 'center': False, 'extra': False}
 ```
 
 Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 
+### Rescaling a camera
 
-### Camera models
+```python
+half_res = model.rescale(0.5)   # new standalone camera with halved focal, center, image size
+print(half_res.to_colmap())     # exportable
+```
 
-[All camera models are supported](colmap_cameras/models):
+## Camera Models
 
 **COLMAP models:**
 
@@ -104,46 +113,18 @@ Available parameter groups: `'focal'`, `'center'`, `'extra'`.
 | POLYNOMIAL_DIVISION_MODEL| `PolynomialDivisionModel` | Multi-parameter division model       |
 | WOODSCAPE               | `WoodScape`                | Valeo WoodScape fisheye model        |
 
-To use a specific camera model you can import it directly from the `colmap_cameras.models` module.
-
-```python
-import torch
-from colmap_cameras_pytorch.colmap_cameras.models import Pinhole
-
-image_shape = torch.tensor([[100, 100]]).float()
-params = torch.tensor([100, 100, 50, 50]).float()
-model = Pinhole(params, image_shape)
-```
-
-### Valid region estimation
-
-Camera distortion can become non-monotonic — the mapping $\text{pixel} \to \text{ray}$ develops a fold where nearby pixels map to wildly different ray directions. We detect this by checking the **round-trip Jacobian**.
-
-For a pixel $\mathbf{p}$, consider the composition $g(\mathbf{p}) = \text{map}(\text{unmap}(\mathbf{p}))$. In the valid region this is the identity, so $J_g = I$ and $\det(J_g) = 1$. At a fold, Newton's root finder inside `unmap` converges to a wrong root, so $g(\mathbf{p}) \neq \mathbf{p}$ and $\det(J_g)$ deviates from 1. The criterion is:
-
-$$\left|\det\!\left(\frac{\partial\, \text{map}(\text{unmap}(\mathbf{p}))}{\partial \mathbf{p}}\right) - 1\right| < \varepsilon$$
-
-We compute $\det(J_g)$ via two backward passes through the full $\text{map}(\text{unmap}(\mathbf{p}))$ chain, then flood-fill from the principal point to get the largest connected valid component.
-
-This requires differentiating through Newton's iterations (not the implicit function theorem), because the IFT backward hides root-switching discontinuities.
-
-```python
-from colmap_cameras.utils.valid_region import estimate_valid_region
-
-valid_mask = estimate_valid_region(camera, step=2)  # (H, W) bool tensor
-```
-
-Interactive visualization with radial profile and slider:
-
-```bash
-python3 -m apps.valid_region --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0"
-```
-
-### Camera wrappers
+## Camera Wrappers
 
 Camera wrappers live in `colmap_cameras.adapters` and inherit from `CameraAdapter`, which delegates all common methods to the inner model. They compose freely in any order.
 
-**`ValidatedCamera`** — filters out points outside the valid region. Precomputes a lookup table in spherical coordinates `(theta, phi)` so validity checks are O(1) per ray. Both `map()` and `unmap()` return `(result, valid)` tuples with zero vectors for invalid points (no NaN).
+| Wrapper | Purpose | `map()` | `unmap()` |
+|:-------:|:--------|:--------|:----------|
+| `ValidatedCamera` | Filters invalid points | Checks ray against spherical validity map | Returns `(rays, valid)`, zeros for invalid |
+| `CompositeCamera` | Extends to full sphere | Delegates to inner | Atan continuation past valid boundary |
+| `ResizedCamera` | Scale resolution | Scales output pixels | Scales input pixels |
+| `LUTCamera` | Precomputed fast lookup | Spherical $(\theta, \phi)$ LUT | Pixel grid LUT |
+
+**`ValidatedCamera`** — filters out points outside the valid region. Precomputes a lookup table in spherical coordinates $(\theta, \phi)$ so validity checks are $O(1)$ per ray. Both `map()` and `unmap()` return `(result, valid)` tuples with zero vectors for invalid points (no NaN).
 
 ```python
 from colmap_cameras import ValidatedCamera
@@ -185,7 +166,17 @@ loss = reprojection + 0.1 * cam.monotonicity_loss()   # prevents folding during 
 from colmap_cameras import ResizedCamera
 
 half = ResizedCamera(inner_camera, scale=0.5)   # half resolution
-double = ResizedCamera(inner_camera, scale=2.0) # double resolution
+print(half.to_colmap())                          # exports rescaled params
+```
+
+**`LUTCamera`** — precomputes `map` and `unmap` into dense lookup tables. Uses bilinear interpolation via `grid_sample` for fast evaluation. `unmap` uses a pixel grid LUT, `map` uses a spherical $(\theta, \phi)$ grid LUT.
+
+```python
+from colmap_cameras import LUTCamera
+
+cam = LUTCamera(inner_camera, pixel_step=1, angle_step=0.5)
+pts2d, valid = cam.map(pts3d)   # spherical LUT lookup
+rays = cam.unmap(pts2d)          # pixel LUT lookup
 ```
 
 Wrappers compose:
@@ -196,28 +187,71 @@ cam = ResizedCamera(ValidatedCamera(inner), scale=0.5)
 cam = ValidatedCamera(ResizedCamera(inner, 0.5))
 ```
 
-## Useful stuff
+## Valid Region Estimation
 
-### Apps
+Camera distortion can become non-monotonic — the mapping $\text{pixel} \to \text{ray}$ develops a fold where nearby pixels map to wildly different ray directions. We detect this by checking the **round-trip Jacobian**.
 
-[`apps.refit_model`](apps/refit_model.py) is a simple script that fits one camera model to another.
+For a pixel $\mathbf{p}$, consider the composition $g(\mathbf{p}) = \text{map}(\text{unmap}(\mathbf{p}))$. In the valid region this is the identity, so $J_g = I$ and $\det(J_g) = 1$. At a fold, Newton's root finder inside `unmap` converges to a wrong root, so $g(\mathbf{p}) \neq \mathbf{p}$ and $\det(J_g)$ deviates from 1. The criterion is:
+
+$$\left|\det\!\left(\frac{\partial\, \text{map}(\text{unmap}(\mathbf{p}))}{\partial \mathbf{p}}\right) - 1\right| < \varepsilon$$
+
+We compute $\det(J_g)$ via finite differences on the round-trip $g(\mathbf{p}) = \text{map}(\text{unmap}(\mathbf{p}))$, then flood-fill from the principal point to get the largest connected valid component. No autograd needed.
+
+```python
+from colmap_cameras.utils.valid_region import estimate_valid_region
+
+valid_mask = estimate_valid_region(camera, step=2)  # (H, W) bool tensor
+```
+
+## Apps
+
+Apps can be run from the repo root (`python3 -m apps.<name>`) or after pip install (`python3 -m colmap_cameras.apps.<name>`).
+
+### Refit model
+
+Fits one camera model to another using Gauss-Newton with analytical Jacobians. Principal point is always fixed.
 
 ```bash
-python3 -m apps.refit_model --input_camera "SIMPLE_RADIAL 100 100 100 50 50 0.3"  --output_camera "RADIAL_FISHEYE" --iterations 20
+python3 -m colmap_cameras.apps.refit_model \
+  --input_camera "SIMPLE_RADIAL 100 100 100 50 50 0.3" \
+  --output_camera "RADIAL_FISHEYE" --iterations 20
+
+python3 -m colmap_cameras.apps.refit_model \
+  --input_camera "MEIS_EXTENDED... 3800 3800 ..." \
+  --output_camera "OPENCV_FISHEYE" --gpu --resize_ratio 0.5
+```
+
+### Undistort
+
+Generates undistorted pinhole images. Can save LUTs for fast remapping without torch.
+
+```bash
+python3 -m colmap_cameras.apps.undistort \
+  --input_camera "OPENCV_FISHEYE 640 480 500 500 320 240 0.1 -0.05 0.01 -0.005" \
+  --fov 120 --output_size 512 \
+  --save_lut ./my_lut \
+  --img_path input.png --output undistorted.png
+```
+
+### Valid region visualization
+
+Interactive visualization with radial profile and azimuth slider.
+
+```bash
+python3 -m colmap_cameras.apps.valid_region \
+  --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0"
 ```
 
 ### Camera model remapper
 
-[`colmap_cameras.utils.remapper`](colmap_cameras/utils/remapper.py) is a class that can be used to remap one camera model to another.
-
 ```python
-from colmap_cameras_pytorch.colmap_cameras.utils.remapper import Remapper
-remapper = Remapper(step = 4) # the step of arange for the image grid
+from colmap_cameras.utils.remapper import Remapper
+remapper = Remapper(step=4)
 img = remapper.remap(model_in, model_out, img_path)
-img = remapper.remap_from_fov(model_in, fov_out, img_path) # fov in degrees
+img = remapper.remap_from_fov(model_in, fov_out, img_path)  # fov in degrees
 ```
 
-### Root solvers
+## Root Solvers
 
 Camera models with polynomial distortion require inverting the distortion function. Set `ROOT_FINDING_METHOD` to choose the solver:
 
@@ -229,33 +263,12 @@ BaseCamera.ROOT_FINDING_METHOD = 'companion'  # eigenvalue solver (auto-falls ba
 
 Newton's method differentiates through the iterations directly (not via the implicit function theorem), which correctly exposes fold singularities in the gradient.
 
+## Analytical Jacobians
+
+Most camera models provide `map_with_jac(pts3d)` which returns `(pts2d, valid, J)` where `J` is the `(N, 2, P)` Jacobian of the projection w.r.t. all camera parameters, computed analytically. Models without an analytical implementation fall back to finite differences. Used internally by the Gauss-Newton fitter.
 
 ## Tests
-
-To run tests:
 
 ```bash
 python3 -m tests.run_tests -v
 ```
-
-### Generating and using LUTs
-
-The undistort app can save look-up tables for fast remapping without recomputing the projection:
-
-```bash
-python3 -m apps.undistort \
-  --input_camera "OPENCV_FISHEYE 640 480 500 500 320 240 0.1 -0.05 0.01 -0.005" \
-  --fov 120 --output_size 512 \
-  --save_lut ./my_lut \
-  --img_path input.png --output undistorted.png
-```
-
-A standalone `lut_remapper.py` is copied into the output directory. Use it to remap images without any torch dependency:
-
-```python
-from lut_remapper import LutRemapper
-remapper = LutRemapper('./my_lut/lut.npz')
-img = remapper.remap('input.png')  # validates input image size
-```
-
-`--output_size` accepts one number (square) or two (width height).

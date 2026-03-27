@@ -41,6 +41,46 @@ class Radial(PerspectiveCamera):
         radial = 1 + (self[3] + self[4] * r2) * r2
         return uv * radial[:, None] * self[0] + self[1:3].reshape(1, 2), valid
 
+    def map_with_jac(self, points3d):
+        # params: [f, cx, cy, k1, k2]
+        valid = points3d[:, 2] > 0
+        N = points3d.shape[0]
+
+        uv = torch.zeros_like(points3d[:, :2])
+        uv[valid] = points3d[:, :2][valid] / points3d[valid, 2][:, None]
+
+        u = uv[:, 0]
+        v = uv[:, 1]
+        u2 = u * u
+        v2 = v * v
+        r2 = u2 + v2
+        r4 = r2 * r2
+
+        f = self[0]
+        k1 = self[3]
+        k2 = self[4]
+
+        radial = 1 + (k1 + k2 * r2) * r2
+        uv_d = uv * radial[:, None]
+        pts2d = uv_d * f + self[1:3].reshape(1, 2)
+
+        J = torch.zeros(N, 2, 5, device=points3d.device, dtype=points3d.dtype)
+        # d/df
+        J[:, 0, 0] = uv_d[:, 0]
+        J[:, 1, 0] = uv_d[:, 1]
+        # d/dcx
+        J[:, 0, 1] = 1.0
+        # d/dcy
+        J[:, 1, 2] = 1.0
+        # d/dk1
+        J[:, 0, 3] = u * r2 * f
+        J[:, 1, 3] = v * r2 * f
+        # d/dk2
+        J[:, 0, 4] = u * r4 * f
+        J[:, 1, 4] = v * r4 * f
+
+        return pts2d, valid, J
+
     def unmap(self, points2d):
         uv = (points2d - self[1:3].reshape(1, 2)) / self[0]
         

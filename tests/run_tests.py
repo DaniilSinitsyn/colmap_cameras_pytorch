@@ -23,7 +23,9 @@ from .meis_extended_camera_model import TestMeisExtendedCameraModel
 from .equirectangular import TestEquirectangular
 from .woodscape import TestWoodScape
 from .test_vs_pycolmap import TestVsPycolmap
-from .adapters import TestResizedCamera, TestValidatedCamera, TestCompositeCamera, TestAdapterComposition
+from .adapters import TestResizedCamera, TestValidatedCamera, TestCompositeCamera, TestAdapterComposition, TestLUTCamera
+from .test_jacobians import TestMapWithJac, TestUnmapWithJac, TestGaussNewtonFit
+from .test_initialize_from import TestInitializeFrom
 
 if __name__ == '__main__':
     unittest.main()

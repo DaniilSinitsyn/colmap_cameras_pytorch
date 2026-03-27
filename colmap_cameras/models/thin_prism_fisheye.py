@@ -37,6 +37,52 @@ class ThinPrismFisheye(PerspectiveCamera):
         
         return uv * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2), valid
 
+    def map_with_jac(self, points3d):
+        # params: [fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, s1, s2]
+        N = points3d.shape[0]
+        P = 12
+        valid = points3d[:, 2] > 0
+
+        uv = torch.zeros_like(points3d[:, :2])
+        uv[valid] = points3d[:, :2][valid] / points3d[valid, 2][:, None]
+
+        r = torch.norm(uv, dim=-1)
+        theta = torch.atan(r)
+        mask = r > self.EPSILON
+        uv[mask] *= (theta[mask] / r[mask])[..., None]
+
+        # uv is now the atan-normalized coords (before distortion)
+        uv_normalized = uv.clone()
+        uv[valid] = self._distortion(uv[valid])
+
+        pts2d = uv * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2)
+
+        J = torch.zeros(N, 2, P, device=points3d.device, dtype=points3d.dtype)
+        # d/dfx = [distorted_x, 0]
+        J[:, 0, 0] = uv[:, 0]
+        # d/dfy = [0, distorted_y]
+        J[:, 1, 1] = uv[:, 1]
+        # d/dcx = [1, 0]
+        J[:, 0, 2] = 1.0
+        # d/dcy = [0, 1]
+        J[:, 1, 3] = 1.0
+
+        # d/d[extra_params] = diag([fx, fy]) @ _d_distortion_d_params(uv_normalized)
+        # _d_distortion_d_params columns: [k1, k2, k3, k4, p1, p2, s1, s2]
+        # self[4:12] storage order:       [k1, k2, p1, p2, k3, k4, s1, s2]
+        # So we need to reorder columns to match storage.
+        if valid.any():
+            dd_dp = self._d_distortion_d_params(uv_normalized[valid])  # (Nv, 2, 8)
+            fx = self[0]
+            fy = self[1]
+            # col -> param index mapping
+            col_to_param = [4, 5, 8, 9, 6, 7, 10, 11]
+            for col, pidx in enumerate(col_to_param):
+                J[valid, 0, pidx] = fx * dd_dp[:, 0, col]
+                J[valid, 1, pidx] = fy * dd_dp[:, 1, col]
+
+        return pts2d, valid, J
+
     def unmap(self, points2d):
         uv = (points2d - self[2:4].reshape(1, 2)) / self[:2].reshape(1, 2)
         
@@ -94,6 +140,64 @@ class ThinPrismFisheye(PerspectiveCamera):
 
         return res
 
+
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        """Estimate k1, k2, p1, p2 from 2D-3D correspondences (k3, k4, s1, s2 set to 0).
+        Uses atan-normalized coordinates matching the map() pipeline."""
+        with torch.no_grad():
+            fx, fy = self[0], self[1]
+            cx, cy = self[2], self[3]
+
+            # Undistorted normalized coords from rays (pts3d are unit-length)
+            uv = pts3d[:, :2] / pts3d[:, 2:3]
+
+            # Apply atan normalization (same as map())
+            r = torch.norm(uv, dim=-1)
+            theta = torch.atan(r)
+            mask = r > self.EPSILON
+            uv_norm = uv.clone()
+            uv_norm[mask] *= (theta[mask] / r[mask])[..., None]
+
+            # Pixel coords -> normalized image coords
+            uv_pixel = torch.stack([(pts2d[:, 0] - cx) / fx,
+                                    (pts2d[:, 1] - cy) / fy], dim=-1)
+
+            u = uv_norm[:, 0]
+            v = uv_norm[:, 1]
+            r2 = u ** 2 + v ** 2
+            r4 = r2 * r2
+            uv_uv = u * v
+
+            # Residual: uv_pixel - uv_norm = uv_norm * (k1*r2 + k2*r4) + [tg_u, tg_v]
+            residual = uv_pixel - uv_norm  # (N, 2)
+
+            N = len(pts2d)
+            A = torch.zeros(2 * N, 4, device=pts2d.device, dtype=pts2d.dtype)
+            b = torch.zeros(2 * N, device=pts2d.device, dtype=pts2d.dtype)
+
+            # u-component
+            A[:N, 0] = u * r2
+            A[:N, 1] = u * r4
+            A[:N, 2] = 2 * uv_uv
+            A[:N, 3] = r2 + 2 * u ** 2
+            b[:N] = residual[:, 0]
+
+            # v-component
+            A[N:, 0] = v * r2
+            A[N:, 1] = v * r4
+            A[N:, 2] = r2 + 2 * v ** 2
+            A[N:, 3] = 2 * uv_uv
+            b[N:] = residual[:, 1]
+
+            coeffs = torch.linalg.lstsq(A, b).solution
+            self[4] = coeffs[0]   # k1
+            self[5] = coeffs[1]   # k2
+            self[6] = coeffs[2]   # p1
+            self[7] = coeffs[3]   # p2
+            self[8] = 0.0         # k3
+            self[9] = 0.0         # k4
+            self[10] = 0.0        # s1
+            self[11] = 0.0        # s2
 
     def _d_distortion_d_pts2d(self, pts2d):
         u2 = pts2d[:, 0] ** 2

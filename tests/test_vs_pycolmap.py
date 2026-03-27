@@ -68,11 +68,10 @@ class TestVsPycolmap(unittest.TestCase):
         # Our projection
         pts2d_ours, valid = ours.map(pts3d)
 
-        # pycolmap projection (works on 2D normalized coords)
+        # pycolmap projection
         pts2d_ref = []
         for p in pts3d[valid].numpy():
-            xy = p[:2] / p[2]
-            pts2d_ref.append(ref.img_from_cam(xy))
+            pts2d_ref.append(ref.img_from_cam(p))
         pts2d_ref = torch.tensor(np.array(pts2d_ref))
 
         diff = (pts2d_ours[valid] - pts2d_ref).abs()

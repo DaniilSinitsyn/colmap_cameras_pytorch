@@ -30,7 +30,7 @@ class DivisionModel(PerspectiveCamera):
     def default_initialization(image_shape):
         x = torch.zeros(4)
         x[0] = (image_shape[0] + image_shape[1]) / 4
-        x[1:2] = torch.tensor([image_shape[0], image_shape[1]]) / 2
+        x[1:3] = torch.tensor([image_shape[0], image_shape[1]]) / 2
         x[3] = 0.0
         return DivisionModel(x, image_shape)
 
@@ -50,6 +50,35 @@ class DivisionModel(PerspectiveCamera):
         uv = self.scale * alpha[...,None] * points3d[:, 0:2]
         return uv + self[1:3].reshape(1, 2), valid
 
+
+    def initialize_distortion_from_points(self, pts2d, pts3d):
+        """Estimate lambda from 2D-3D correspondences via linear least squares."""
+        with torch.no_grad():
+            f = self[0]
+            cx, cy = self[1], self[2]
+
+            # Normalized image coords (matching unmap)
+            uv = torch.stack([(pts2d[:, 0] - cx) / self.scale,
+                              (pts2d[:, 1] - cy) / self.scale], dim=-1)
+            r2 = uv[:, 0] ** 2 + uv[:, 1] ** 2
+
+            # From unmap: ray = (uv_x, uv_y, f*(1 + lambda*r2))
+            # This must be proportional to pts3d = (x, y, z)
+            # Scale: s = ||uv|| / ||xy||
+            xy_norm = torch.sqrt(pts3d[:, 0] ** 2 + pts3d[:, 1] ** 2).clamp(min=1e-8)
+            uv_norm = torch.sqrt(r2).clamp(min=1e-8)
+            mask = (xy_norm > 1e-6) & (r2 > 1e-12)
+            if mask.sum() < 2:
+                return
+
+            s = uv_norm[mask] / xy_norm[mask]
+
+            # f*(1 + lambda*r2) = s*z  =>  f*lambda*r2 = s*z - f
+            A = (f * r2[mask]).unsqueeze(-1)
+            b = s * pts3d[mask, 2] - f
+
+            coeffs = torch.linalg.lstsq(A, b).solution
+            self[3] = coeffs[0]
 
     def unmap(self, points2d):
         uv = (points2d - self[1:3].reshape(1, 2)) / self.scale

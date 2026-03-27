@@ -55,6 +55,43 @@ class SimpleRadialFisheye(PerspectiveCamera):
 
         return uv * self[0] + self[1:3].reshape(1, 2), torch.ones_like(r, dtype=torch.bool)
     
+    def map_with_jac(self, points3d):
+        # params: [f, cx, cy, k1]
+        N = points3d.shape[0]
+        f = self[0]
+        k1 = self[3]
+
+        r = torch.norm(points3d[:, :2], dim=-1)
+        theta = torch.atan2(r, points3d[:, 2])
+        theta2 = theta * theta
+        theta3 = theta2 * theta
+        thetad = theta * (1 + k1 * theta2)
+
+        uv = torch.zeros_like(points3d[:, :2])
+        mask = (r < self.EPSILON) | (theta < self.EPSILON)
+        uv[mask] = points3d[:, :2][mask]
+        uv[~mask] = points3d[:, :2][~mask] * thetad[:, None][~mask] / r[:, None][~mask]
+
+        pts2d = uv * f + self[1:3].reshape(1, 2)
+        valid = torch.ones(N, dtype=torch.bool, device=points3d.device)
+
+        J = torch.zeros(N, 2, 4, device=points3d.device, dtype=points3d.dtype)
+        # d/df = uv (the distorted normalized coords)
+        J[:, 0, 0] = uv[:, 0]
+        J[:, 1, 0] = uv[:, 1]
+        # d/dcx
+        J[:, 0, 1] = 1.0
+        # d/dcy
+        J[:, 1, 2] = 1.0
+        # d/dk1: for non-degenerate points, xy/r * theta^3 * f
+        # For degenerate (mask) points, derivative is 0 (uv = xy, independent of k1)
+        xy_over_r = torch.zeros_like(points3d[:, :2])
+        xy_over_r[~mask] = points3d[:, :2][~mask] / r[~mask, None]
+        J[:, 0, 3] = xy_over_r[:, 0] * theta3 * f
+        J[:, 1, 3] = xy_over_r[:, 1] * theta3 * f
+
+        return pts2d, valid, J
+
     def unmap(self, points2d):
         uv = (points2d - self[1:3].reshape(1, 2)) / self[0]
 
