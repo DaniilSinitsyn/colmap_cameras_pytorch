@@ -1,5 +1,7 @@
 # :globe_with_meridians: Colmap Cameras in PyTorch
 
+[![CI](https://github.com/DaniilSinitsyn/colmap_cameras_pytorch/actions/workflows/ci.yml/badge.svg)](https://github.com/DaniilSinitsyn/colmap_cameras_pytorch/actions/workflows/ci.yml)
+
 PyTorch implementations of camera models from [COLMAP](https://colmap.github.io/) and beyond.
 
 Camera models are `torch.nn.Module` subclasses with full **automatic differentiation** for `map` (project) and `unmap` (backproject) operations.
