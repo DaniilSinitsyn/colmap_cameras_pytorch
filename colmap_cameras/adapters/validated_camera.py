@@ -64,6 +64,11 @@ class ValidatedCamera(CameraAdapter):
         pi = ((phi + 180) / self._angle_step).long().clamp(0, self._sphere_valid.shape[1] - 1)
         self._sphere_valid[ti, pi] = True
 
+        # Dilate by 1 cell to close discretization gaps at bucket boundaries
+        padded = torch.nn.functional.pad(self._sphere_valid.unsqueeze(0).unsqueeze(0).float(), (1, 1, 1, 1), mode='replicate')
+        dilated = torch.nn.functional.max_pool2d(padded, kernel_size=3, stride=1, padding=0)
+        self._sphere_valid = dilated.squeeze().bool()
+
     def _rays_valid(self, rays):
         with torch.no_grad():
             r = rays / rays.norm(dim=-1, keepdim=True).clamp(min=1e-8)

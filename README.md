@@ -12,6 +12,7 @@ Camera models are `torch.nn.Module` subclasses with full **automatic differentia
 - [Basic Usage](#basic-usage)
 - [Camera Models](#camera-models)
 - [Camera Wrappers](#camera-wrappers)
+- [Camera Rig](#camera-rig)
 - [Valid Region Estimation](#valid-region-estimation)
 - [Apps](#apps)
 - [Root Solvers](#root-solvers)
@@ -125,6 +126,8 @@ Camera wrappers live in `colmap_cameras.adapters` and inherit from `CameraAdapte
 | `CompositeCamera` | Extends to full sphere | Delegates to inner | Atan continuation past valid boundary |
 | `ResizedCamera` | Scale resolution | Scales output pixels | Scales input pixels |
 | `LUTCamera` | Precomputed fast lookup | Spherical $(\theta, \phi)$ LUT | Pixel grid LUT |
+| `RotatedCamera` | Extrinsic rotation | Rotates points world→cam | Rotates rays cam→world |
+| `MaskedCamera` | Border + validity mask | Excludes border pixels | Delegates to inner |
 
 **`ValidatedCamera`** — filters out points outside the valid region. Precomputes a lookup table in spherical coordinates $(\theta, \phi)$ so validity checks are $O(1)$ per ray. Both `map()` and `unmap()` return `(result, valid)` tuples with zero vectors for invalid points (no NaN).
 
@@ -181,12 +184,83 @@ pts2d, valid = cam.map(pts3d)   # spherical LUT lookup
 rays = cam.unmap(pts2d)          # pixel LUT lookup
 ```
 
+**`RotatedCamera`** — applies an extrinsic rotation to rays. `R_cam2world` transforms rays from the camera's local frame into the world frame. Use this to place cameras in a multi-camera rig.
+
+```python
+from colmap_cameras import RotatedCamera
+
+cam = RotatedCamera(inner_camera, R_cam2world)
+rays = cam.unmap(pts2d)        # rays in world frame
+pts2d, valid = cam.map(pts3d)  # pts3d in world frame
+```
+
+**`MaskedCamera`** — shrinks the valid region by a pixel border and builds a uint8 mask image `(h, w)` combining validity with border exclusion. The mask is suitable for `cv2.remap` and saving to disk. A pre-computed mask can be passed to skip validity estimation.
+
+```python
+from colmap_cameras import MaskedCamera
+
+cam = MaskedCamera(ValidatedCamera(inner), border_size=50)
+cam.mask    # (h, w) uint8 numpy array, 255=valid, 0=invalid
+
+# Or with a pre-computed mask
+cam = MaskedCamera(inner, border_size=10, mask=my_mask)
+```
+
 Wrappers compose:
 
 ```python
 cam = ResizedCamera(ValidatedCamera(inner), scale=0.5)
 # or
 cam = ValidatedCamera(ResizedCamera(inner, 0.5))
+```
+
+## Camera Rig
+
+`CameraRig` holds a named collection of cameras and projects world-frame 3D points through all of them in one call.
+
+```python
+from colmap_cameras import CameraRig, RotatedCamera, MaskedCamera, ValidatedCamera
+
+rig = CameraRig({
+    'front': MaskedCamera(ValidatedCamera(front_model), border_size=50),
+    'back':  MaskedCamera(ValidatedCamera(RotatedCamera(back_model, R_cam2world)), border_size=50),
+})
+
+results = rig.map(pts3d)   # {'front': (pts2d, valid), 'back': (pts2d, valid)}
+rig['front']               # access individual cameras
+```
+
+### RigRemapper
+
+`RigRemapper` remaps images from a camera rig into any target camera's pixel space using distance-based blending. Each camera's weight is proportional to its distance from the valid region boundary, producing smooth seams in overlap regions.
+
+```python
+from colmap_cameras.utils.rig_remapper import RigRemapper
+
+remapper = RigRemapper(rig, mask_border=10)
+
+# One-off: build LUTs and remap in one call
+image, mask = remapper.remap({'front': img_f, 'back': img_b}, target_camera)
+
+# Batch: precompute LUTs once, apply to many frames
+luts = remapper.build_luts(target_camera)
+for img_f, img_b in frame_pairs:
+    image, mask = RigRemapper.remap_from_luts({'front': img_f, 'back': img_b}, luts)
+```
+
+The `mask_border` parameter erodes each camera's mask by that many pixels in target space, creating a zero-gap of `2 * mask_border` between adjacent cameras.
+
+Any target camera works — equirectangular for panoramas, pinhole for cubemap faces:
+
+```python
+from colmap_cameras.models import Equirectangular, SimplePinhole
+
+# Panorama
+target = Equirectangular.default_initialization(torch.tensor([7680, 3840])).to('cuda')
+
+# Cubemap face (90° FoV pinhole, rotated)
+pinhole = SimplePinhole(torch.tensor([512.0, 511.5, 511.5]), torch.tensor([1024, 1024]))
+target = RotatedCamera(pinhole.to('cuda'), R_face.to('cuda'))
 ```
 
 ## Valid Region Estimation
@@ -208,6 +282,25 @@ valid_mask = estimate_valid_region(camera, step=2)  # (H, W) bool tensor
 ## Apps
 
 Apps can be run from the repo root (`python3 -m apps.<name>`) or after pip install (`python3 -m colmap_cameras.apps.<name>`).
+
+### Panorama / Cubemap
+
+Stitches a front+back fisheye pair into an equirectangular panorama and/or cubemap.
+
+```bash
+python3 -m apps.panorama front.jpg back.jpg \
+  --front-camera "OPENCV_FISHEYE 3840 3840 1015.8 1015.7 1931.8 1924.4 0.019 0.023 -0.008 0.0002" \
+  --back-camera  "OPENCV_FISHEYE 3840 3840 1017.4 1017.5 1930.6 1940.5 0.020 0.022 -0.008 0.0002" \
+  --pose "0.003 -0.008 -1.0 -0.002" \
+  -o panorama.jpg --output-mask mask.png
+
+# With cubemap output (optionally rotated 45° so faces straddle source cameras)
+python3 -m apps.panorama front.jpg back.jpg \
+  --front-camera "..." --back-camera "..." --pose "qw qx qy qz" \
+  -o panorama.jpg --cubemap-dir ./cubemap --cubemap-rotation 45
+```
+
+`--pose` is the back camera's `R_cam2world` as a quaternion `(qw, qx, qy, qz)`. Use `colmap_cameras.utils.quaternion.rotmat_to_quat` to convert from a rotation matrix.
 
 ### Refit model
 

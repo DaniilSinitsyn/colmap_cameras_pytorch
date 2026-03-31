@@ -16,12 +16,18 @@ def roundtrip_jacobian_det(camera, pts2d, eps=0.5):
     dv = torch.tensor([0, eps], device=pts2d.device)
 
     rays = camera.unmap(pts2d)
+    if isinstance(rays, tuple):
+        rays = rays[0]
     g, v0 = camera.map(rays)
 
     rays_du = camera.unmap(pts2d + du)
+    if isinstance(rays_du, tuple):
+        rays_du = rays_du[0]
     g_du, v1 = camera.map(rays_du)
 
     rays_dv = camera.unmap(pts2d + dv)
+    if isinstance(rays_dv, tuple):
+        rays_dv = rays_dv[0]
     g_dv, v2 = camera.map(rays_dv)
 
     ok = (~torch.isnan(rays).any(dim=-1) & v0

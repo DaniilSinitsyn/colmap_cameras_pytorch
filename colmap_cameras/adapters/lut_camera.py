@@ -50,6 +50,8 @@ class LUTCamera(CameraAdapter):
 
         with torch.no_grad():
             rays = self.inner.unmap(pts2d)
+            if isinstance(rays, tuple):
+                rays = rays[0]
             rays[torch.isnan(rays)] = 0
 
         ws, hs = len(u), len(v)

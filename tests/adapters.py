@@ -1,11 +1,17 @@
 """
 2026 Daniil Sinitsyn
 
-Tests for camera adapters: ResizedCamera, ValidatedCamera, CompositeCamera.
+Tests for camera adapters.
 """
 import unittest
+import math
+import numpy as np
 import torch
-from colmap_cameras import model_selector_from_str, ResizedCamera, ValidatedCamera, CompositeCamera, LUTCamera
+from colmap_cameras import (
+    model_selector_from_str, ResizedCamera, ValidatedCamera,
+    CompositeCamera, LUTCamera, RotatedCamera, MaskedCamera,
+)
+from colmap_cameras.adapters.utils import has_adapter
 
 
 def make_camera():
@@ -14,6 +20,10 @@ def make_camera():
 
 def make_camera_strong():
     return model_selector_from_str('SIMPLE_RADIAL 200 200 100 100 100 -2.0')
+
+
+def make_fisheye():
+    return model_selector_from_str('OPENCV_FISHEYE 200 200 100 100 100 100 0.01 -0.01 0.001 -0.001')
 
 
 class TestResizedCamera(unittest.TestCase):
@@ -226,6 +236,140 @@ class TestLUTCamera(unittest.TestCase):
         cam = ResizedCamera(LUTCamera(inner), 0.5)
         rays = cam.unmap(torch.tensor([[50., 50.]]))
         self.assertFalse(torch.isnan(rays).any())
+
+
+class TestRotatedCamera(unittest.TestCase):
+
+    def test_identity_rotation(self):
+        inner = make_camera()
+        cam = RotatedCamera(inner, torch.eye(3))
+        pts2d = torch.tensor([[100., 100.], [120., 110.]])
+        rays_inner = inner.unmap(pts2d)
+        rays_rotated = cam.unmap(pts2d)
+        self.assertLess((rays_inner - rays_rotated).abs().max().item(), 1e-6)
+
+    def test_identity_map(self):
+        inner = make_camera()
+        cam = RotatedCamera(inner, torch.eye(3))
+        pts3d = torch.tensor([[0.1, 0.05, 1.0]])
+        p_inner, v_inner = inner.map(pts3d)
+        p_rot, v_rot = cam.map(pts3d)
+        self.assertTrue(v_inner.all() and v_rot.all())
+        self.assertLess((p_inner - p_rot).abs().max().item(), 1e-6)
+
+    def test_180_rotation(self):
+        inner = make_camera()
+        R = torch.tensor([[-1., 0., 0.], [0., 1., 0.], [0., 0., -1.]])
+        cam = RotatedCamera(inner, R)
+        pts2d = torch.tensor([[100., 100.]])
+        rays_inner = inner.unmap(pts2d)
+        rays_rotated = cam.unmap(pts2d)
+        expected = rays_inner.clone()
+        expected[:, 0] *= -1
+        expected[:, 2] *= -1
+        self.assertLess((rays_rotated - expected).abs().max().item(), 1e-5)
+
+    def test_roundtrip(self):
+        inner = make_camera()
+        cam = RotatedCamera(inner, torch.eye(3))
+        pts2d = torch.tensor([[110., 105.]])
+        rays = cam.unmap(pts2d)
+        pts2d_back, valid = cam.map(rays)
+        self.assertTrue(valid.all())
+        self.assertLess((pts2d_back - pts2d).abs().max().item(), 1e-2)
+
+    def test_invalid_R_shape(self):
+        with self.assertRaises(ValueError):
+            RotatedCamera(make_camera(), torch.eye(4))
+
+    def test_model_name(self):
+        cam = RotatedCamera(make_camera(), torch.eye(3))
+        self.assertIn('Rotated', cam.model_name)
+
+    def test_unmap_tuple_passthrough(self):
+        inner = ValidatedCamera(make_fisheye(), step=2)
+        cam = RotatedCamera(inner, torch.eye(3))
+        result = cam.unmap(torch.tensor([[100., 100.]]))
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+
+class TestMaskedCamera(unittest.TestCase):
+
+    def test_mask_shape(self):
+        inner = make_camera()
+        cam = MaskedCamera(inner, border_size=10)
+        w, h = int(inner.image_shape[0].item()), int(inner.image_shape[1].item())
+        self.assertEqual(cam.mask.shape, (h, w))
+
+    def test_mask_dtype(self):
+        cam = MaskedCamera(make_camera(), border_size=10)
+        self.assertEqual(cam.mask.dtype, np.uint8)
+
+    def test_border_zeros(self):
+        cam = MaskedCamera(make_camera(), border_size=10)
+        self.assertEqual(cam.mask[0, :].max(), 0)
+        self.assertEqual(cam.mask[-1, :].max(), 0)
+        self.assertEqual(cam.mask[:, 0].max(), 0)
+        self.assertEqual(cam.mask[:, -1].max(), 0)
+
+    def test_center_valid(self):
+        cam = MaskedCamera(make_camera(), border_size=10)
+        self.assertEqual(cam.mask[100, 100], 255)
+
+    def test_check_bounds_excludes_border(self):
+        cam = MaskedCamera(make_camera(), border_size=20)
+        pts = torch.tensor([[10., 10.], [100., 100.], [195., 195.]])
+        ok = cam.check_bounds(pts)
+        self.assertFalse(ok[0].item())
+        self.assertTrue(ok[1].item())
+        self.assertFalse(ok[2].item())
+
+    def test_map_respects_border(self):
+        cam = MaskedCamera(make_camera(), border_size=20)
+        # Center should be valid, extreme angle should be invalid (near edge)
+        pts3d_center = torch.tensor([[0.0, 0.0, 1.0]])
+        pts3d_edge = torch.tensor([[2.0, 2.0, 1.0]])
+        _, valid_center = cam.map(pts3d_center)
+        _, valid_edge = cam.map(pts3d_edge)
+        self.assertTrue(valid_center[0].item())
+        self.assertFalse(valid_edge[0].item())
+
+    def test_custom_mask(self):
+        inner = make_camera()
+        w, h = int(inner.image_shape[0].item()), int(inner.image_shape[1].item())
+        custom = np.ones((h, w), dtype=np.uint8) * 255
+        custom[:50, :] = 0
+        cam = MaskedCamera(inner, border_size=0, mask=custom)
+        self.assertEqual(cam.mask[25, 100], 0)
+        self.assertEqual(cam.mask[100, 100], 255)
+
+    def test_negative_border_raises(self):
+        with self.assertRaises(ValueError):
+            MaskedCamera(make_camera(), border_size=-1)
+
+    def test_model_name(self):
+        cam = MaskedCamera(make_camera(), border_size=10)
+        self.assertIn('Masked', cam.model_name)
+
+
+class TestHasAdapter(unittest.TestCase):
+
+    def test_direct(self):
+        cam = MaskedCamera(make_camera(), border_size=10)
+        self.assertTrue(has_adapter(cam, MaskedCamera))
+
+    def test_nested(self):
+        cam = MaskedCamera(ValidatedCamera(make_camera(), step=2), border_size=10)
+        self.assertTrue(has_adapter(cam, ValidatedCamera))
+        self.assertTrue(has_adapter(cam, MaskedCamera))
+
+    def test_missing(self):
+        cam = ValidatedCamera(make_camera(), step=2)
+        self.assertFalse(has_adapter(cam, MaskedCamera))
+
+    def test_raw_camera(self):
+        self.assertFalse(has_adapter(make_camera(), MaskedCamera))
 
 
 if __name__ == '__main__':

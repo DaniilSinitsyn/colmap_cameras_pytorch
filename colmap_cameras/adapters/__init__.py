@@ -3,3 +3,5 @@ from .composite_camera import CompositeCamera
 from .validated_camera import ValidatedCamera
 from .resized_camera import ResizedCamera
 from .lut_camera import LUTCamera
+from .rotated_camera import RotatedCamera
+from .masked_camera import MaskedCamera
