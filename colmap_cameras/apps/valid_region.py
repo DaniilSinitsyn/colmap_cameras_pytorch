@@ -51,6 +51,8 @@ def main():
     parser.add_argument("--input_camera", type=str, required=True)
     parser.add_argument("--img_path", type=str, default=None)
     parser.add_argument("--step", type=float, default=2)
+    parser.add_argument("--save-mask", type=str, default=None, help="Save valid region mask to this path")
+    parser.add_argument("--visualize", action="store_true", help="Show interactive visualization")
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -60,6 +62,13 @@ def main():
 
     w, h = int(camera.image_shape[0].item()), int(camera.image_shape[1].item())
     mask_np = estimate_valid_region(camera, step=args.step).cpu().numpy()
+
+    if args.save_mask:
+        cv2.imwrite(args.save_mask, mask_np.astype(np.uint8) * 255)
+        print(f"Saved mask to {args.save_mask}")
+
+    if not args.visualize:
+        return
 
     # Build overlay
     if args.img_path is not None:
