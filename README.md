@@ -328,13 +328,19 @@ python3 -m colmap_cameras.apps.undistort \
   --img_path input.png --output undistorted.png
 ```
 
-### Valid region visualization
+### Valid region
 
-Interactive visualization with radial profile and azimuth slider.
+Estimate and save the valid region mask, optionally with interactive visualization.
 
 ```bash
+# Save mask only
 python3 -m colmap_cameras.apps.valid_region \
-  --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0"
+  --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0" \
+  --save-mask mask.png
+
+# Interactive visualization with radial profile and azimuth slider
+python3 -m colmap_cameras.apps.valid_region \
+  --input_camera "SIMPLE_RADIAL 200 200 100 100 100 -2.0" --visualize
 ```
 
 ### Camera model remapper
