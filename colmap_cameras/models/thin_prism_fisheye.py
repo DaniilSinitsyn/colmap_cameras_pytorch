@@ -25,17 +25,19 @@ class ThinPrismFisheye(PerspectiveCamera):
 
     def map(self, points3d):
         valid = points3d[:, 2] > 0
-        uv = torch.zeros_like(points3d[:, :2])
-        uv[valid] = points3d[:, :2][valid] / points3d[valid, 2][:, None]
-        
-        r = torch.norm(uv, dim=-1)
+        # Avoid in-place ops for autograd safety
+        z_safe = torch.where(valid, points3d[:, 2], torch.ones_like(points3d[:, 2]))
+        uv0 = points3d[:, :2] / z_safe[:, None]
+
+        r = torch.norm(uv0, dim=-1)
         theta = torch.atan(r)
         mask = r > self.EPSILON
-        uv[mask] *= (theta[mask] / r[mask])[..., None]
+        scale = torch.where(mask, theta / r.clamp_min(self.EPSILON), torch.ones_like(r))
+        uv1 = uv0 * scale[..., None]
 
-        uv[valid] = self._distortion(uv[valid])
-        
-        return uv * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2), valid
+        uv2 = self._distortion(uv1)
+
+        return uv2 * self[:2].reshape(1, 2) + self[2:4].reshape(1, 2), valid
 
     def map_with_jac(self, points3d):
         # params: [fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, s1, s2]
@@ -109,10 +111,7 @@ class ThinPrismFisheye(PerspectiveCamera):
         tg_u = 2 * self[6] * uv + self[7] * (r2 + 2 * u2) + self[10] * r2
         tg_v = 2 * self[7] * uv + self[6] * (r2 + 2 * v2) + self[11] * r2
 
-        new_pts2d = pts2d * radial[:, None]
-        new_pts2d += torch.stack((tg_u, tg_v), dim=-1) 
-        
-        return new_pts2d
+        return pts2d * radial[:, None] + torch.stack((tg_u, tg_v), dim=-1)
     
     def _d_distortion_d_params(self, pts2d):
         u2 = pts2d[:, 0] ** 2
