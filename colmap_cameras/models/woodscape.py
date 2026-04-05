@@ -131,7 +131,7 @@ class WoodScape(PerspectiveCamera):
             self[6] = coeffs[3]  # d
 
     def get_center(self):
-        return self[1:3].reshape(1, 2) + self.image_shape.reshape(1, 2) / 2 - 0.5
+        return self[1:3] + self.image_shape / 2 - 0.5
 
     def unmap(self, points2d):
         uv = (points2d - self[1:3].reshape(1, 2) - self.image_shape.reshape(1, 2) / 2 + 0.5) 
