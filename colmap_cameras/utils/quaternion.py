@@ -91,7 +91,9 @@ def rotmat_to_quat(R):
         q[m, 2] = (r[:, 0, 2] - r[:, 2, 0]) / s
         q[m, 3] = (r[:, 1, 0] - r[:, 0, 1]) / s
 
-    # Ensure positive qw
-    q = q * q[:, 0:1].sign()
+    # Ensure positive qw (when qw==0, pick sign of first nonzero component)
+    sign = q[:, 0:1].sign()
+    sign[sign == 0] = 1
+    q = q * sign
 
     return q.reshape(*batch_shape, 4)

@@ -89,12 +89,11 @@ class MeisCameraModel(PerspectiveCamera):
         uv = IterativeUndistortion.apply(self[5:], uv0, self, self.ROOT_FINDING_MAX_ITERATIONS)
 
         r2 = uv[:, 0] * uv[:, 0] + uv[:, 1] * uv[:, 1]
-        b = (self[4] + (1 + (1 - self[4] * self[4]) * r2).sqrt()) / (1 + r2) 
-        
-        uv = uv * (b / (b - self[4]))[..., None]
-        uv[b - self[4] < self.EPSILON] = 0.0
+        b = (self[4] + (1 + (1 - self[4] * self[4]) * r2).sqrt()) / (1 + r2)
 
-        return torch.cat((uv, torch.ones_like(uv[:, :1])), dim=-1)
+        # Ray on unit sphere: (u*b, v*b, b - alpha)
+        z = b - self[4]
+        return torch.stack([uv[:, 0] * b, uv[:, 1] * b, z], dim=-1)
 
 
     def _distortion(self, pts2d):

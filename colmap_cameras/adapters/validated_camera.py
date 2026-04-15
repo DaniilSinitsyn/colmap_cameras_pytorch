@@ -23,10 +23,11 @@ class ValidatedCamera(CameraAdapter):
         rays, valid = cam.unmap(pts2d)
     """
 
-    def __init__(self, inner, step=2.0, angle_step=1.0, auto_update=True):
+    def __init__(self, inner, step=2.0, angle_step=1.0, auto_update=True, max_fov=360.0):
         super().__init__(inner)
         self._step = step
         self._angle_step = angle_step
+        self._max_theta = max_fov / 2.0
         n_theta = int(180 / angle_step) + 1
         n_phi = int(360 / angle_step) + 1
         self.register_buffer('_sphere_valid', torch.ones(n_theta, n_phi, dtype=torch.bool, device=inner.device))
@@ -60,9 +61,12 @@ class ValidatedCamera(CameraAdapter):
         theta = torch.acos(rays[:, 2].clamp(-1, 1)) * 180 / math.pi
         phi = torch.atan2(rays[:, 1], rays[:, 0]) * 180 / math.pi
 
+        # Cut rays beyond max FOV
+        fov_ok = theta <= self._max_theta
+
         ti = (theta / self._angle_step).long().clamp(0, self._sphere_valid.shape[0] - 1)
         pi = ((phi + 180) / self._angle_step).long().clamp(0, self._sphere_valid.shape[1] - 1)
-        self._sphere_valid[ti, pi] = True
+        self._sphere_valid[ti[fov_ok], pi[fov_ok]] = True
 
         # Dilate by 1 cell to close discretization gaps at bucket boundaries
         padded = torch.nn.functional.pad(self._sphere_valid.unsqueeze(0).unsqueeze(0).float(), (1, 1, 1, 1), mode='replicate')

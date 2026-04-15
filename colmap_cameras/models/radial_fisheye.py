@@ -110,13 +110,17 @@ class RadialFisheye(PerspectiveCamera):
         polynomials[:, 0] = -r
 
         theta = self.root_finder(r, polynomials, self.ROOT_FINDING_MAX_ITERATIONS)
-       
-        mask = (r > self.EPSILON) & (torch.tan(theta) > self.EPSILON)
-        z = torch.ones_like(r)
-        z[mask] = r[mask] / torch.tan(theta[mask])
 
+        sin_theta = torch.sin(theta)
+        cos_theta = torch.cos(theta)
 
-        return torch.cat((uv, z[...,None]), dim=-1)
+        ray = torch.zeros(len(uv), 3, device=uv.device, dtype=uv.dtype)
+        mask = r > self.EPSILON
+        ray[mask, :2] = uv[mask] / r[mask, None] * sin_theta[mask, None]
+        ray[mask, 2] = cos_theta[mask]
+        ray[~mask, 2] = 1.0
+
+        return ray
 
     def initialize_distortion_from_points(self, pts2d, pts3d):
         r = torch.norm(pts3d[:, :2], dim=-1)
