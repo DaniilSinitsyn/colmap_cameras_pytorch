@@ -73,6 +73,17 @@ class ValidatedCamera(CameraAdapter):
         dilated = torch.nn.functional.max_pool2d(padded, kernel_size=3, stride=1, padding=0)
         self._sphere_valid = dilated.squeeze().bool()
 
+        # Collapse poles: theta=0 and theta=180 are single 3D points. Binning into
+        # 361 phi cells creates discretization holes near the forward/backward axis.
+        if self._sphere_valid[0].any():
+            self._sphere_valid[0] = True
+        if self._sphere_valid[-1].any():
+            self._sphere_valid[-1] = True
+        # Stitch the phi seam: columns 0 and -1 are the same dihedral angle (±π).
+        seam = self._sphere_valid[:, 0] | self._sphere_valid[:, -1]
+        self._sphere_valid[:, 0] = seam
+        self._sphere_valid[:, -1] = seam
+
     def _rays_valid(self, rays):
         with torch.no_grad():
             r = rays / rays.norm(dim=-1, keepdim=True).clamp(min=1e-8)
